@@ -193,7 +193,7 @@ export async function discoverLatestVersion(
         success: false,
         error: `Latest-version discovery timed out after ${timeoutMs}ms. ` +
           `Cannot continue without a valid version. ` +
-          `Check network connectivity or supply a version explicitly with --version.`,
+          `Check network connectivity or supply a version explicitly with --factory-version.`,
       };
     }
 
@@ -202,7 +202,7 @@ export async function discoverLatestVersion(
         success: false,
         error: `Latest-version endpoint unreachable: ${message}. ` +
           `Cannot continue without a valid version. ` +
-          `Check network connectivity or supply a version explicitly with --version.`,
+          `Check network connectivity or supply a version explicitly with --factory-version.`,
       };
     }
 
@@ -211,7 +211,7 @@ export async function discoverLatestVersion(
         success: false,
         error: `Latest-version endpoint returned an error: ${message}. ` +
           `Cannot continue without a valid version. ` +
-          `Supply a version explicitly with --version.`,
+          `Supply a version explicitly with --factory-version.`,
       };
     }
 
@@ -219,7 +219,7 @@ export async function discoverLatestVersion(
       success: false,
       error: `Latest-version discovery failed: ${message}. ` +
         `Cannot continue without a valid version. ` +
-        `Supply a version explicitly with --version.`,
+        `Supply a version explicitly with --factory-version.`,
     };
   }
 
@@ -232,11 +232,11 @@ export async function discoverLatestVersion(
 function addVersionSuggestion(result: VersionDiscoveryResult): VersionDiscoveryResult {
   if (result.success) return result;
   // Only add suggestion if not already present
-  if (result.error && !result.error.includes("--version")) {
+  if (result.error && !result.error.includes("--factory-version")) {
     return {
       ...result,
       error: result.error +
-        " Supply a version explicitly with --version.",
+        " Supply a version explicitly with --factory-version.",
     };
   }
   return result;
@@ -286,6 +286,6 @@ export async function resolveVersion(
   return {
     success: false,
     error:
-      "No version specified. Use --version <X.Y.Z> or --latest to discover the latest version.",
+      "No version specified. Use --factory-version <X.Y.Z> or --latest to discover the latest version.",
   };
 }

@@ -352,13 +352,22 @@ program
       // VAL-EXTRACT-004: Package metadata validation
       if (extractResult.metadataValidation) {
         if (!extractResult.metadataValidation.valid) {
-          process.stderr.write(
-            `\n✗ Package metadata validation failed:\n`
+          // Separate version-mismatch errors from other metadata errors
+          const versionMismatchErrors = extractResult.metadataValidation.errors.filter(
+            (e) => e.includes("Version mismatch")
           );
-          for (const err of extractResult.metadataValidation.errors) {
-            process.stderr.write(`  - ${err}\n`);
-          }
-          if (!options.versionOverride) {
+          const otherErrors = extractResult.metadataValidation.errors.filter(
+            (e) => !e.includes("Version mismatch")
+          );
+
+          // --version-override only bypasses version mismatch, not other metadata errors
+          if (otherErrors.length > 0) {
+            process.stderr.write(
+              `\n✗ Package metadata validation failed (cannot be bypassed with --version-override):\n`
+            );
+            for (const err of otherErrors) {
+              process.stderr.write(`  - ${err}\n`);
+            }
             const cleaned = tracker.cleanupOnFailure();
             if (cleaned.length > 0) {
               process.stderr.write(
@@ -366,10 +375,32 @@ program
               );
             }
             process.exit(1);
-          } else {
-            process.stderr.write(
-              `  Continuing due to --version-override.\n`
-            );
+          }
+
+          // Version mismatch errors are bypassable with --version-override
+          if (versionMismatchErrors.length > 0) {
+            if (!options.versionOverride) {
+              process.stderr.write(
+                `\n✗ Package metadata validation failed:\n`
+              );
+              for (const err of versionMismatchErrors) {
+                process.stderr.write(`  - ${err}\n`);
+              }
+              const cleaned = tracker.cleanupOnFailure();
+              if (cleaned.length > 0) {
+                process.stderr.write(
+                  `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+                );
+              }
+              process.exit(1);
+            } else {
+              process.stderr.write(
+                `  ⚠ Version mismatch bypassed with --version-override:\n`
+              );
+              for (const err of versionMismatchErrors) {
+                process.stderr.write(`    - ${err}\n`);
+              }
+            }
           }
         }
       }

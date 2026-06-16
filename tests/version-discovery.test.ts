@@ -326,12 +326,12 @@ describe("discoverLatestVersion (integration)", () => {
     expect(result.error).toContain("timed out");
   }, 10000);
 
-  it("error message suggests --version fallback", async () => {
+  it("error message suggests --factory-version fallback", async () => {
     const result = await discoverLatestVersion(
       `http://localhost:${port}/malformed-json`,
       5000
     );
-    expect(result.error).toContain("--version");
+    expect(result.error).toContain("--factory-version");
   });
 });
 
@@ -360,6 +360,7 @@ describe("resolveVersion", () => {
     const result = await resolveVersion({});
     expect(result.success).toBe(false);
     expect(result.error).toContain("No version specified");
+    expect(result.error).toContain("--factory-version");
   });
 
   it("discovers latest when --latest is requested", async () => {

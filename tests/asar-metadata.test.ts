@@ -107,6 +107,28 @@ describe("validateAsarMetadata", () => {
     expect(result.valid).toBe(true);
   });
 
+  // --version-override does NOT bypass non-version metadata errors
+  it("does not bypass non-version errors even with versionOverride", () => {
+    const meta: AsarPackageMetadata = {
+      name: "desktop",
+      productName: "WrongProduct",
+      version: "0.106.0",
+      main: "",
+      electronVersion: undefined,
+    };
+    const result = validateAsarMetadata(meta, {
+      selectedVersion: "0.107.0",
+      versionOverride: true,
+    });
+    // Version mismatch is bypassed, but other errors still fail
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("Product name mismatch"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("Main entry"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("Electron version"))).toBe(true);
+    // Version mismatch should NOT be in errors when override is active
+    expect(result.errors.some((e) => e.includes("Version mismatch"))).toBe(false);
+  });
+
   it("fails validation for missing main entry", () => {
     const meta = { ...validMetadata, main: "" };
     const result = validateAsarMetadata(meta, {

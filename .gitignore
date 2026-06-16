@@ -17,8 +17,8 @@ out/
 *.exe
 *.sha256
 
-# Downloaded CLI binaries
-droid
+# Downloaded CLI binaries (scoped to repo root only)
+/droid
 !src/
 
 # Environment / secrets

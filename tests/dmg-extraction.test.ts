@@ -138,6 +138,7 @@ describe("formatExtractionResult", () => {
         errors: [],
       },
       fileHashes: {},
+      warnings: [],
     };
     const formatted = formatExtractionResult(result);
     expect(formatted).toContain("0.106.0");
@@ -149,6 +150,7 @@ describe("formatExtractionResult", () => {
     const result = {
       success: false as const,
       error: "extraction error",
+      warnings: [],
     };
     const formatted = formatExtractionResult(result);
     expect(formatted).toContain("failed");
@@ -164,11 +166,28 @@ describe("formatDeterminismResult", () => {
       deterministic: true,
       run1Version: "0.106.0",
       run2Version: "0.106.0",
+      run1Hashes: {
+        "Factory/Factory.app/Contents/Resources/app.asar": "abc123",
+        "Factory/Factory.app/Contents/Info.plist": "def456",
+      },
       differences: [],
     };
     const formatted = formatDeterminismResult(result);
     expect(formatted).toContain("✓");
     expect(formatted).toContain("Deterministic");
+    // Should use the app.asar hash, not an arbitrary Object.values order
+    expect(formatted).toContain("abc123");
+  });
+
+  it("formats deterministic result with no hashes", () => {
+    const result = {
+      deterministic: true,
+      run1Version: "0.106.0",
+      run2Version: "0.106.0",
+      differences: [],
+    };
+    const formatted = formatDeterminismResult(result);
+    expect(formatted).toContain("N/A");
   });
 
   it("formats non-deterministic result", () => {
@@ -290,6 +309,20 @@ describeIfDmg("extractDmgPayload (integration)", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBeDefined();
+  });
+
+  it("returns empty warnings for successful extraction with all optional paths", () => {
+    const extractDir = path.join(workDir, "extracted");
+    const result = extractDmgPayload(X64_DMG, extractDir, {
+      selectedVersion: "0.106.0",
+      extractIcons: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warnings).toBeDefined();
+    // Icons should extract successfully from the reference DMG,
+    // so there should be no icon-related warnings
+    expect(result.warnings.filter((w) => w.includes("icon"))).toHaveLength(0);
   });
 });
 

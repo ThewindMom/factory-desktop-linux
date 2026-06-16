@@ -70,9 +70,10 @@ export function validateDmg(dmgPath: string): DmgValidationResult {
     };
   }
 
-  // Check 6: Verify it's a valid DMG that 7z can list
+  // Check 6 & 7: Verify it's a valid DMG that 7z can list AND contains Factory.app
+  let listing: string;
   try {
-    execSync(`7z l "${dmgPath}"`, {
+    listing = execSync(`7z l "${dmgPath}"`, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 30000,
@@ -84,25 +85,11 @@ export function validateDmg(dmgPath: string): DmgValidationResult {
     };
   }
 
-  // Check 7: Verify it's a Factory Desktop DMG by looking for expected content
-  try {
-    const listing = execSync(`7z l "${dmgPath}"`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 30000,
-    });
-
-    // Factory Desktop DMGs contain "Factory.app" in their listing
-    if (!listing.includes("Factory.app")) {
-      return {
-        valid: false,
-        error: `DMG does not appear to be a Factory Desktop DMG (no Factory.app found in archive): ${dmgPath}`,
-      };
-    }
-  } catch (err) {
+  // Factory Desktop DMGs contain "Factory.app" in their listing
+  if (!listing.includes("Factory.app")) {
     return {
       valid: false,
-      error: `Failed to inspect DMG contents: ${dmgPath} (${String(err)})`,
+      error: `DMG does not appear to be a Factory Desktop DMG (no Factory.app found in archive): ${dmgPath}`,
     };
   }
 

@@ -47,6 +47,8 @@ export interface ExtractionResult {
   metadataValidation?: MetadataValidationResult;
   /** All extracted file hashes for determinism verification */
   fileHashes?: Record<string, string>;
+  /** Warnings from extraction (e.g., optional icon extraction failure) */
+  warnings: string[];
   /** Error on failure */
   error?: string;
 }
@@ -77,12 +79,15 @@ export interface DeterminismResult {
  * @param dmgPath - Path to the DMG file
  * @param outputDir - Directory to extract into
  * @param dmgPaths - Paths inside the DMG to extract
+ * @returns Array of paths that failed extraction (with warnings), empty if all succeeded
  */
 export function extractFromDmg(
   dmgPath: string,
   outputDir: string,
   dmgPaths: string[]
-): void {
+): string[] {
+  const failedPaths: string[] = [];
+
   // Ensure output directory exists
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -104,8 +109,12 @@ export function extractFromDmg(
           `Failed to extract required path "${dmgPath_entry}" from DMG: ${String(err)}`
         );
       }
+      // Optional paths (icons, etc.) fail gracefully with a warning
+      failedPaths.push(dmgPath_entry);
     }
   }
+
+  return failedPaths;
 }
 
 /**
@@ -197,6 +206,8 @@ export function extractDmgPayload(
     extractIcons?: boolean;
   }
 ): ExtractionResult {
+  const warnings: string[] = [];
+
   try {
     // Ensure output directory exists
     fs.mkdirSync(outputDir, { recursive: true });
@@ -211,8 +222,30 @@ export function extractDmgPayload(
       pathsToExtract.push(DMG_CONTENT_PATHS.electronIcns);
     }
 
-    // Extract from DMG
-    extractFromDmg(dmgPath, outputDir, pathsToExtract);
+    // Also extract the Electron Framework Info.plist for Electron version fallback
+    pathsToExtract.push(DMG_CONTENT_PATHS.electronFrameworkPlist);
+
+    // Extract from DMG (returns failed optional paths)
+    const failedPaths = extractFromDmg(dmgPath, outputDir, pathsToExtract);
+
+    // Surface warnings for optional paths that failed extraction
+    for (const failedPath of failedPaths) {
+      if (failedPath.includes("electron.icns")) {
+        warnings.push(
+          `Optional icon extraction failed: "${failedPath}" not found in DMG. ` +
+          `Desktop icon generation will need an alternative icon source.`
+        );
+      } else if (failedPath.includes("Electron Framework")) {
+        warnings.push(
+          `Optional Electron Framework Info.plist extraction failed: "${failedPath}" not found in DMG. ` +
+          `Electron version will be inferred from ASAR devDependencies instead.`
+        );
+      } else {
+        warnings.push(
+          `Optional path extraction failed: "${failedPath}" not found in DMG.`
+        );
+      }
+    }
 
     // Locate extracted files
     const asarPath = path.join(outputDir, DMG_CONTENT_PATHS.appAsar);
@@ -223,6 +256,7 @@ export function extractDmgPayload(
       return {
         success: false,
         error: `app.asar was not extracted from DMG. Expected at: ${asarPath}`,
+        warnings,
       };
     }
 
@@ -232,6 +266,7 @@ export function extractDmgPayload(
       return {
         success: false,
         error: `Failed to read ASAR metadata: ${asarResult.error}`,
+        warnings,
       };
     }
 
@@ -285,11 +320,13 @@ export function extractDmgPayload(
       packageMetadata: asarResult.packageMetadata,
       metadataValidation,
       fileHashes,
+      warnings,
     };
   } catch (err) {
     return {
       success: false,
       error: `DMG extraction failed: ${String(err)}`,
+      warnings,
     };
   }
 }
@@ -461,10 +498,17 @@ export function formatExtractionResult(result: ExtractionResult): string {
  */
 export function formatDeterminismResult(result: DeterminismResult): string {
   if (result.deterministic) {
+    // Use the known app.asar key for the determinism summary instead of
+    // Object.values which has nondeterministic key order
+    const asarKey = Object.keys(result.run1Hashes || {}).find(
+      (k) => k.includes("app.asar")
+    );
+    const asarHash = asarKey && result.run1Hashes ? result.run1Hashes[asarKey] : "N/A";
+
     return [
       "✓ Deterministic extraction verified: both runs produced identical results.",
       `  Version: ${result.run1Version}`,
-      `  ASAR hash: ${result.run1Hashes ? Object.values(result.run1Hashes)[0] : "N/A"}`,
+      `  ASAR hash: ${asarHash}`,
     ].join("\n");
   }
 

@@ -13,6 +13,7 @@ import * as http from "http";
 import * as crypto from "crypto";
 import { execSync } from "child_process";
 import { classifyBinary, BinaryType } from "./runtime-classifier";
+import { discoverLatestVersion } from "./version-discovery";
 
 /** Factory CLI Linux x64 download URL template */
 export const DROID_DOWNLOAD_URL_TEMPLATE =
@@ -274,8 +275,8 @@ export async function resolveDroid(
     downloadUrlOverride?: string;
     /** Override checksum URL (for testing) */
     checksumUrlOverride?: string;
-    /** Override latest version URL to try for fallback (for testing) */
-    fallbackLatestUrl?: string;
+    /** Override latest-version discovery URL for fallback (for testing) */
+    fallbackVersionDiscoveryUrl?: string;
   } = {}
 ): Promise<DroidResolutionResult> {
   const errors: string[] = [];
@@ -319,16 +320,40 @@ export async function resolveDroid(
       };
     }
 
-    // Fallback: try latest
+    // Fallback: discover the latest available version from the endpoint,
+    // then download that specific version (not a literal "latest" URL segment)
     warnings.push(
       `Exact version droid download failed (${exactMessage}). ` +
         `Attempting fallback to latest-compatible version per policy.`
     );
 
-    // Try to discover the latest available version
-    const latestUrl =
-      options.fallbackLatestUrl ||
-      buildDroidDownloadUrl("latest");
+    // Discover the latest Factory CLI version
+    const latestVersionResult = await discoverLatestVersion(
+      options.fallbackVersionDiscoveryUrl,
+      timeoutMs
+    );
+
+    if (!latestVersionResult.success || !latestVersionResult.version) {
+      return {
+        success: false,
+        requestedVersion,
+        versionMatch: "unknown",
+        checksumVerified: false,
+        elfVerified: false,
+        executableSet: false,
+        versionRan: false,
+        errors: [
+          `Failed to download droid for version ${requestedVersion}: ${exactMessage}.`,
+          `Fallback to latest also failed: could not discover latest version` +
+            (latestVersionResult.error ? ` (${latestVersionResult.error})` : "") +
+            `.`,
+        ],
+        warnings,
+      };
+    }
+
+    const latestVersion = latestVersionResult.version;
+    const latestUrl = buildDroidDownloadUrl(latestVersion);
 
     try {
       // Clean up failed download
@@ -336,8 +361,11 @@ export async function resolveDroid(
         fs.unlinkSync(droidDestPath);
       }
       await downloadFile(latestUrl, droidDestPath, timeoutMs);
-      downloadVersion = "latest";
+      downloadVersion = latestVersion;
       versionMatch = "fallback";
+      warnings.push(
+        `Resolved fallback droid version: ${latestVersion} (discovered from latest-version endpoint).`
+      );
     } catch (fallbackErr) {
       const fallbackMessage =
         fallbackErr instanceof Error
@@ -354,7 +382,7 @@ export async function resolveDroid(
         versionRan: false,
         errors: [
           `Failed to download droid for version ${requestedVersion}: ${exactMessage}.`,
-          `Fallback to latest also failed: ${fallbackMessage}.`,
+          `Fallback to latest version ${latestVersion} also failed: ${fallbackMessage}.`,
         ],
         warnings,
       };

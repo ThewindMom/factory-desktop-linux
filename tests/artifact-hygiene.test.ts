@@ -51,6 +51,25 @@ describe("ArtifactTracker", () => {
       }).not.toThrow();
     });
 
+    it("allows tracking exact generated directory roots (e.g., work/)", () => {
+      // This is the blocking scrutiny fix: the CLI tracks the work/ directory
+      // itself as an artifact, not just files within it.
+      expect(() => {
+        tracker.track(dirs.work, "Extraction workspace");
+      }).not.toThrow();
+
+      const artifacts = tracker.getArtifacts();
+      expect(artifacts.length).toBeGreaterThan(0);
+      expect(artifacts[0].path).toBe(path.resolve(dirs.work));
+    });
+
+    it("marks directory root as created when it exists", () => {
+      tracker.track(dirs.work, "Extraction workspace");
+      const artifacts = tracker.getArtifacts();
+      // The work/ directory was created in beforeEach
+      expect(artifacts[0].created).toBe(true);
+    });
+
     it("refuses tracking artifacts outside generated directories", () => {
       const srcArtifact = path.join(projectRoot, "src", "app.asar");
       expect(() => {

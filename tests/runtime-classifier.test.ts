@@ -122,10 +122,14 @@ describe("validateRuntimePayloadForLinux", () => {
     }
   });
 
-  it("rejects non-existent binary", () => {
+  // NotAFile (missing binary) is valid because no macOS runtime binaries
+  // are present and the droid has not been resolved yet. It must be
+  // resolved before packaging, but absence is not a classification error.
+  it("reports valid for non-existent binary (not yet resolved, no macOS binaries present)", () => {
     const result = validateRuntimePayloadForLinux("/nonexistent/droid");
-    expect(result.valid).toBe(true); // NotAFile is not an error (droid not resolved yet)
+    expect(result.valid).toBe(true);
     expect(result.classifications["droid"].type).toBe(BinaryType.NotAFile);
+    expect(result.summary).toContain("must be resolved");
   });
 
   it("reports summary for valid Linux payload", () => {

@@ -225,9 +225,16 @@ export function validateRuntimePayloadForLinux(
         `Linux runtime payload validated: droid is Linux x86_64 ELF. ` +
         `No macOS runtime binaries are present in the Linux payload.`;
     } else if (droidClassification.type === BinaryType.NotAFile) {
+      // NotAFile (missing binary) is treated as valid because the droid
+      // has not been resolved yet. The validation confirms that no macOS
+      // runtime binaries are present. The droid must be resolved (via
+      // the droid-resolver) before packaging, but the absence of a binary
+      // at this stage is not a classification error.
       summary =
         `Droid binary not found at expected path. ` +
-        `No macOS runtime binaries detected, but droid must be resolved before packaging.`;
+        `No macOS runtime binaries detected. ` +
+        `The droid must be resolved (downloaded or provided) before Linux packaging; ` +
+        `absence at this stage is not a classification failure.`;
     } else {
       summary =
         `Runtime payload classification: droid is ${droidClassification.type}.`;
