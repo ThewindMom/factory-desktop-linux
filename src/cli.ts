@@ -645,18 +645,83 @@ program
     "deb,appimage"
   )
   .option(
+    "--app-dir <path>",
+    "Path to the assembled Linux app directory (default: build/factory-desktop-linux-unpacked/)"
+  )
+  .option(
+    "--factory-version <version>",
+    "Factory Desktop version for package metadata (default: auto-detected)"
+  )
+  .option(
+    "--app-name <name>",
+    "Application name for packaging (default: Factory)",
+    "Factory"
+  )
+  .option(
+    "--exec-name <name>",
+    "Executable name for packaging (default: factory-desktop)",
+    "factory-desktop"
+  )
+  .option(
+    "--icon-path <path>",
+    "Path to icon directory or PNG icon file for packaging"
+  )
+  .option(
+    "--desktop-entry <path>",
+    "Path to .desktop entry file for packaging"
+  )
+  .option(
+    "--output-dir <dir>",
+    "Output directory for packaging artifacts (default: dist/)"
+  )
+  .option(
+    "--validate",
+    "Validate package contents after build",
+    false
+  )
+  .option(
+    "--checksums",
+    "Generate SHA-256 checksums for all release artifacts",
+    true
+  )
+  .option(
+    "--test-launch",
+    "Test that packaged artifacts launch from extracted contexts",
+    false
+  )
+  .option(
     "--release-mode <mode>",
     "Release mode: safe (default) or permission-cleared",
     DEFAULT_RELEASE_MODE
   )
-  .action((options) => {
+  .action(async (options) => {
+    const {
+      buildPackages,
+      validateDebPackage,
+      validateAppImage,
+      validatePackagedDroid,
+      generateChecksums,
+      verifyChecksums,
+      extractDebContext,
+      extractAppImageContext,
+      testExtractedLaunch,
+      formatPackageBuildResult,
+      formatDebValidationResult,
+      formatAppImageValidationResult,
+      formatPackagedDroidResult,
+      formatChecksumResult,
+      formatExtractedLaunchResult,
+    } = await import("./packaging");
+
     const releaseMode = resolveReleaseMode(options.releaseMode);
     const targets = options.targets.split(",").map((t: string) => t.trim());
+    const projectRoot = process.cwd();
+    const dirs = resolveDirs(projectRoot);
 
     process.stdout.write(`Release mode: ${describeReleaseMode(releaseMode)}\n`);
     process.stdout.write(`Targets: ${targets.join(", ")}\n`);
 
-    // Check that rpmbuild is not silently skipped
+    // Check that rpmbuild is not silently skipped (VAL-PACKAGE-010 deferred)
     if (targets.includes("rpm")) {
       const rpmTool = { name: "rpmbuild", description: "RPM builder", required: false };
       const rpmCheck = checkTool(rpmTool);
@@ -669,12 +734,271 @@ program
       }
     }
 
-    // Packaging is a placeholder for the packaging-worker feature
+    // Determine app directory
+    const appDir = options.appDir ||
+      path.join(dirs.build, "factory-desktop-linux-unpacked");
+
+    if (!fs.existsSync(appDir)) {
+      process.stderr.write(
+        `Assembled app directory not found: ${appDir}\n` +
+        `Run the assemble command first to create the Linux app directory.\n`
+      );
+      process.exit(1);
+    }
+
+    // Determine factory version
+    let factoryVersion = options.factoryVersion;
+    if (!factoryVersion) {
+      // Try to read from version file in the app directory
+      const versionFile = path.join(appDir, "version");
+      if (fs.existsSync(versionFile)) {
+        factoryVersion = fs.readFileSync(versionFile, "utf-8").trim();
+      } else {
+        // Try to get from the directory name
+        const dirBasename = path.basename(appDir);
+        const versionMatch = dirBasename.match(/(\d+\.\d+\.\d+)/);
+        if (versionMatch) {
+          factoryVersion = versionMatch[1];
+        } else {
+          process.stderr.write(
+            `Cannot determine Factory Desktop version. ` +
+            `Use --factory-version <X.Y.Z> to specify.\n`
+          );
+          process.exit(1);
+        }
+      }
+    }
+
     process.stdout.write(
-      "\nPackaging not yet implemented. " +
-      "This will be completed by the packaging-worker feature.\n"
+      `\n--- Building Packages (VAL-PACKAGE-001, VAL-PACKAGE-003) ---\n` +
+      `  App directory: ${appDir}\n` +
+      `  Factory version: ${factoryVersion}\n` +
+      `  App name: ${options.appName}\n` +
+      `  Exec name: ${options.execName}\n`
     );
+
+    const outputDir = options.outputDir || dirs.dist;
+
+    // Track artifacts for hygiene
+    const tracker = new ArtifactTracker(projectRoot);
+
+    try {
+      ensureGeneratedDirs(dirs);
+      tracker.track(outputDir, "Packaging output");
+
+      // Step 1: Build packages
+      const buildResult = buildPackages({
+        appDir,
+        outputDir,
+        factoryVersion,
+        appName: options.appName,
+        execName: options.execName,
+        targets,
+        iconPath: options.iconPath,
+        desktopEntryPath: options.desktopEntry,
+        releaseMode,
+      });
+
+      process.stdout.write(`\n${formatPackageBuildResult(buildResult)}\n`);
+
+      if (!buildResult.success) {
+        process.stderr.write(`\n✗ Package build failed.\n`);
+        process.exit(1);
+      }
+
+      // Step 2: Validate package contents (always validate for verification)
+      {
+        process.stdout.write(`\n--- Validating Package Contents ---\n`);
+
+        // Validate .deb package (VAL-PACKAGE-002)
+        if (buildResult.debPath) {
+          process.stdout.write(`\n--- Debian Package Validation (VAL-PACKAGE-002) ---\n`);
+
+          const debResult = validateDebPackage(buildResult.debPath);
+          process.stdout.write(`\n${formatDebValidationResult(debResult)}\n`);
+
+          if (!debResult.valid) {
+            process.stderr.write(`\n⚠ Debian package validation has issues.\n`);
+          }
+
+          // Validate droid binary in deb (VAL-PACKAGE-005)
+          process.stdout.write(`\n--- Packaged Droid Validation (deb, VAL-PACKAGE-005) ---\n`);
+
+          // Extract droid from deb for validation
+          const debExtractDir = path.join(
+            os.tmpdir(),
+            `factory-deb-droid-${Date.now()}`
+          );
+          try {
+            const extractResult = extractDebContext(buildResult.debPath, debExtractDir);
+            if (extractResult.success && extractResult.executablePath) {
+              // Find the droid in the extracted context
+              const extractedDroid = findDroidInDir(debExtractDir);
+              if (extractedDroid) {
+                const droidResult = validatePackagedDroid(extractedDroid, "deb");
+                process.stdout.write(`\n${formatPackagedDroidResult(droidResult)}\n`);
+              }
+            }
+          } finally {
+            if (fs.existsSync(debExtractDir)) {
+              try { fs.rmSync(debExtractDir, { recursive: true, force: true }); } catch { /* best effort */ }
+            }
+          }
+        }
+
+        // Validate AppImage (VAL-PACKAGE-003, VAL-PACKAGE-004)
+        if (buildResult.appImagePath) {
+          process.stdout.write(`\n--- AppImage Validation (VAL-PACKAGE-003, VAL-PACKAGE-004) ---\n`);
+
+          const appImageResult = validateAppImage(buildResult.appImagePath);
+          process.stdout.write(`\n${formatAppImageValidationResult(appImageResult)}\n`);
+
+          if (!appImageResult.valid) {
+            process.stderr.write(`\n⚠ AppImage validation has issues.\n`);
+          }
+
+          // Validate droid binary in AppImage (VAL-PACKAGE-005)
+          process.stdout.write(`\n--- Packaged Droid Validation (AppImage, VAL-PACKAGE-005) ---\n`);
+
+          const appImageExtractDir = path.join(
+            os.tmpdir(),
+            `factory-appimage-droid-${Date.now()}`
+          );
+          try {
+            const extractResult = extractAppImageContext(
+              buildResult.appImagePath,
+              appImageExtractDir
+            );
+            if (extractResult.success) {
+              const extractedDroid = findDroidInDir(appImageExtractDir);
+              if (extractedDroid) {
+                const droidResult = validatePackagedDroid(extractedDroid, "appimage");
+                process.stdout.write(`\n${formatPackagedDroidResult(droidResult)}\n`);
+              }
+            }
+          } finally {
+            if (fs.existsSync(appImageExtractDir)) {
+              try { fs.rmSync(appImageExtractDir, { recursive: true, force: true }); } catch { /* best effort */ }
+            }
+          }
+        }
+      }
+
+      // Step 3: Generate checksums (VAL-PACKAGE-006)
+      if (options.checksums !== false && buildResult.artifacts.length > 0) {
+        process.stdout.write(`\n--- Generating Checksums (VAL-PACKAGE-006) ---\n`);
+
+        const checksumResult = generateChecksums(buildResult.artifacts, outputDir);
+        process.stdout.write(`\n${formatChecksumResult(checksumResult)}\n`);
+
+        if (checksumResult.success) {
+          // Verify the checksums
+          process.stdout.write(`\nVerifying checksums...\n`);
+          const verifyResult = verifyChecksums(checksumResult.manifestPath);
+          if (verifyResult.valid) {
+            process.stdout.write(`✓ Checksum verification passed.\n`);
+          } else {
+            process.stderr.write(
+              `✗ Checksum verification failed: ${verifyResult.errors.join(", ")}\n`
+            );
+          }
+        }
+      }
+
+      // Step 4: Test extracted launch (VAL-PACKAGE-013)
+      if (options.testLaunch) {
+        process.stdout.write(`\n--- Testing Extracted Launch (VAL-PACKAGE-013) ---\n`);
+
+        if (buildResult.debPath) {
+          const debExtractDir = path.join(
+            os.tmpdir(),
+            `factory-deb-launch-${Date.now()}`
+          );
+          try {
+            const extractResult = extractDebContext(buildResult.debPath, debExtractDir);
+            if (extractResult.success && extractResult.executablePath) {
+              const launchResult = testExtractedLaunch(
+                extractResult.executablePath,
+                "deb"
+              );
+              process.stdout.write(`\n${formatExtractedLaunchResult(launchResult)}\n`);
+            }
+          } finally {
+            if (fs.existsSync(debExtractDir)) {
+              try { fs.rmSync(debExtractDir, { recursive: true, force: true }); } catch { /* best effort */ }
+            }
+          }
+        }
+
+        if (buildResult.appImagePath) {
+          const appImageExtractDir = path.join(
+            os.tmpdir(),
+            `factory-appimage-launch-${Date.now()}`
+          );
+          try {
+            const extractResult = extractAppImageContext(
+              buildResult.appImagePath,
+              appImageExtractDir
+            );
+            if (extractResult.success && extractResult.executablePath) {
+              const launchResult = testExtractedLaunch(
+                extractResult.executablePath,
+                "appimage"
+              );
+              process.stdout.write(`\n${formatExtractedLaunchResult(launchResult)}\n`);
+            }
+          } finally {
+            if (fs.existsSync(appImageExtractDir)) {
+              try { fs.rmSync(appImageExtractDir, { recursive: true, force: true }); } catch { /* best effort */ }
+            }
+          }
+        }
+      }
+
+      // Final git hygiene check
+      const finalGitCheck = tracker.verifyGitIgnored(projectRoot);
+      if (!finalGitCheck.clean) {
+        process.stderr.write(
+          `\nERROR: Proprietary artifacts detected in tracked locations: ` +
+          `${finalGitCheck.tracked.join(", ")}\n`
+        );
+        process.exit(1);
+      }
+
+      // Summary
+      process.stdout.write(
+        `\n✓ Packaging complete.\n` +
+        `  Artifacts: ${buildResult.artifacts.length}\n` +
+        (buildResult.debPath ? `  Debian: ${buildResult.debPath}\n` : "") +
+        (buildResult.appImagePath ? `  AppImage: ${buildResult.appImagePath}\n` : "") +
+        `  Version: ${factoryVersion}\n`
+      );
+    } catch (err) {
+      process.stderr.write(`Packaging failed: ${String(err)}\n`);
+      process.exit(1);
+    }
   });
+
+/**
+ * Find the droid binary in a directory tree.
+ */
+function findDroidInDir(dir: string): string | null {
+  if (!fs.existsSync(dir)) return null;
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findDroidInDir(fullPath);
+      if (found) return found;
+    } else if (entry.name === "droid") {
+      return fullPath;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Collect artifact paths from the out/ directory (packaging output).
