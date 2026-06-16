@@ -40,6 +40,12 @@ export interface PackageBuildOptions {
   releaseMode: ReleaseMode;
   /** Architecture string (default: "amd64" for deb, "x86_64" for AppImage) */
   arch?: string;
+  /**
+   * Whether to clean stale packaging artifacts from the output directory
+   * before building (default: true). Prevents picking up stale .deb,
+   * .AppImage, or yml files from previous builds.
+   */
+  clean?: boolean;
 }
 
 /** Result of package build */
@@ -211,6 +217,28 @@ export function buildPackages(options: PackageBuildOptions): PackageBuildResult 
 
   // Ensure output directory exists
   fs.mkdirSync(options.outputDir, { recursive: true });
+
+  // Clean stale packaging artifacts from previous builds to prevent
+  // findArtifacts from picking up outdated .deb, .AppImage, or yml
+  // files. Default is auto-clean enabled.
+  if (options.clean !== false) {
+    const staleExtensions = [".deb", ".AppImage", ".yml", ".yaml", ".sha256", ".blockmap"];
+    const dirsToClean = [options.outputDir, path.join(process.cwd(), "out")];
+    for (const dirToClean of dirsToClean) {
+      if (!fs.existsSync(dirToClean)) continue;
+      const staleFiles = fs.readdirSync(dirToClean).filter((f) =>
+        staleExtensions.some((ext) => f.endsWith(ext))
+      );
+      for (const staleFile of staleFiles) {
+        try {
+          fs.unlinkSync(path.join(dirToClean, staleFile));
+          warnings.push(`Removed stale artifact from previous build: ${staleFile}`);
+        } catch {
+          // Best-effort cleanup
+        }
+      }
+    }
+  }
 
   // Build electron-builder configuration
   const builderConfig = createElectronBuilderConfig(options);

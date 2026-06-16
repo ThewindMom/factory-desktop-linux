@@ -418,6 +418,89 @@ describe("packaging", () => {
       }
     });
 
+    test("cleans stale dist artifacts from previous builds by default", () => {
+      const tempDir = createTempDir("build-stale-clean");
+      try {
+        const appDir = createMockAppDir(tempDir);
+        const outputDir = path.join(tempDir, "dist");
+        fs.mkdirSync(outputDir, { recursive: true });
+
+        // Create stale artifacts that should be cleaned.
+        // Use version-specific names that electron-builder won't recreate
+        // with the same name during the current build.
+        const staleDeb = path.join(outputDir, "factory-desktop_0.105.0_amd64.deb");
+        const staleAppImage = path.join(outputDir, "factory-desktop_0.105.0_x86_64.AppImage");
+        const staleSha256 = path.join(outputDir, "checksums.txt.sha256");
+        const staleBlockmap = path.join(outputDir, "factory-desktop_0.105.0_x86_64.blockmap");
+        fs.writeFileSync(staleDeb, "old deb content");
+        fs.writeFileSync(staleAppImage, "old appimage content");
+        fs.writeFileSync(staleSha256, "old sha256 content");
+        fs.writeFileSync(staleBlockmap, "old blockmap content");
+
+        const result = buildPackages({
+          appDir,
+          outputDir,
+          factoryVersion: "0.106.0",
+          appName: "Factory",
+          execName: "factory-desktop",
+          targets: ["deb"],
+          releaseMode: ReleaseMode.Safe,
+        });
+
+        // The stale artifacts should have been removed (clean defaults to true)
+        expect(result.warnings).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("Removed stale artifact"),
+          ])
+        );
+
+        // The stale files should no longer exist (version-specific names
+        // won't be recreated by the current build)
+        expect(fs.existsSync(staleDeb)).toBe(false);
+        expect(fs.existsSync(staleAppImage)).toBe(false);
+        expect(fs.existsSync(staleSha256)).toBe(false);
+        expect(fs.existsSync(staleBlockmap)).toBe(false);
+      } finally {
+        cleanupTempDir(tempDir);
+      }
+    });
+
+    test("skips stale artifact cleaning when clean is false", () => {
+      const tempDir = createTempDir("build-no-clean");
+      try {
+        const appDir = createMockAppDir(tempDir);
+        const outputDir = path.join(tempDir, "dist");
+        fs.mkdirSync(outputDir, { recursive: true });
+
+        // Create a stale artifact that should NOT be cleaned
+        const staleDeb = path.join(outputDir, "factory-desktop_0.105.0_amd64.deb");
+        fs.writeFileSync(staleDeb, "old deb content");
+
+        const result = buildPackages({
+          appDir,
+          outputDir,
+          factoryVersion: "0.106.0",
+          appName: "Factory",
+          execName: "factory-desktop",
+          targets: ["deb"],
+          releaseMode: ReleaseMode.Safe,
+          clean: false,
+        });
+
+        // No stale artifact removal warnings
+        expect(result.warnings).not.toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("Removed stale artifact"),
+          ])
+        );
+
+        // The stale file should still exist
+        expect(fs.existsSync(staleDeb)).toBe(true);
+      } finally {
+        cleanupTempDir(tempDir);
+      }
+    });
+
     test("fails for no valid targets", () => {
       const tempDir = createTempDir("build-notargets");
       try {

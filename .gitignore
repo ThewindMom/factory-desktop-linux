@@ -19,7 +19,6 @@ out/
 
 # Downloaded CLI binaries (scoped to repo root only)
 /droid
-!src/
 
 # Environment / secrets
 .env

@@ -14,10 +14,12 @@ import {
   parseElectronVersionFromPlist,
   parseFactoryVersionFromPlist,
   computeExtractionHashes,
+  extractFromDmg,
   extractDmgPayload,
   verifyDeterministicExtraction,
   formatExtractionResult,
   formatDeterminismResult,
+  DMG_CONTENT_PATHS,
 } from "../src/dmg-extraction";
 
 // Reference DMG path
@@ -109,6 +111,53 @@ describe("computeExtractionHashes", () => {
   it("returns empty for non-existent directory", () => {
     const hashes = computeExtractionHashes("/nonexistent/path");
     expect(Object.keys(hashes)).toHaveLength(0);
+  });
+});
+
+// ============== Unit tests for extractFromDmg optional vs required paths ==============
+
+describe("extractFromDmg", () => {
+  it("treats Electron Framework Info.plist as optional, not required", () => {
+    // Create a temp directory and a fake DMG that 7z will reject.
+    // We can't easily mock 7z, but we can test the path classification
+    // logic by calling extractFromDmg with a nonexistent DMG and
+    // verifying that the Electron Framework plist path is returned
+    // as a failed optional path rather than throwing.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dmg-opt-"));
+    try {
+      // Use a nonexistent DMG - all paths will fail.
+      // For optional paths, they should be returned in the failed list.
+      // For required paths (app.asar, app Info.plist), they should throw.
+      const frameworkPlist = DMG_CONTENT_PATHS.electronFrameworkPlist;
+      const appAsar = DMG_CONTENT_PATHS.appAsar;
+
+      // Test that app.asar is required (throws)
+      expect(() =>
+        extractFromDmg("/nonexistent.dmg", tempDir, [appAsar])
+      ).toThrow(/Failed to extract required path/);
+
+      // Test that the app's own Info.plist is required (throws)
+      expect(() =>
+        extractFromDmg("/nonexistent.dmg", tempDir, [DMG_CONTENT_PATHS.infoPlist])
+      ).toThrow(/Failed to extract required path/);
+
+      // Test that the Electron Framework plist is optional (returns in failed list)
+      const failedPaths = extractFromDmg("/nonexistent.dmg", tempDir, [frameworkPlist]);
+      expect(failedPaths).toContain(frameworkPlist);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats icon paths as optional", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dmg-opt-"));
+    try {
+      const iconPath = DMG_CONTENT_PATHS.electronIcns;
+      const failedPaths = extractFromDmg("/nonexistent.dmg", tempDir, [iconPath]);
+      expect(failedPaths).toContain(iconPath);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -455,6 +455,38 @@ describe("checkDaemonBinding", () => {
     expect(result.portWasOccupied).toBe(true);
     expect(result.safe).toBe(false);
   });
+
+  it("does not emit contradictory bound-to-all-interfaces error for loopback daemon", async () => {
+    // When the daemon host is 127.0.0.1 and loopback-only validation passes,
+    // the "bound to all interfaces" diagnostic from ss output should be a
+    // warning, not an error. This avoids contradictory output where the
+    // result says "safe" but lists an "ERROR: bound to all interfaces".
+    const result = await checkDaemonBinding({
+      host: "127.0.0.1",
+      port: 18090,
+      endpoint: "http://127.0.0.1:18090",
+    });
+
+    expect(result.loopbackOnly).toBe(true);
+    expect(result.safe).toBe(true);
+    // The "bound to all interfaces" message, if present from ss output for
+    // another process sharing the port, must be in warnings, not errors.
+    const allInterfacesErrors = result.errors.filter(
+      (e) => e.includes("0.0.0.0") || e.includes("all interfaces")
+    );
+    expect(allInterfacesErrors).toHaveLength(0);
+  });
+
+  it("includes warnings field for informational port-sharing messages", async () => {
+    const result = await checkDaemonBinding({
+      host: "127.0.0.1",
+      port: 18090,
+      endpoint: "http://127.0.0.1:18090",
+    });
+
+    // warnings array should always be present (may be empty)
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
 });
 
 // ─── detectStaleDaemon (VAL-RUNTIME-013) ────────────────────────────────────
@@ -1090,6 +1122,7 @@ describe("format functions", () => {
       boundHost: "127.0.0.1",
       boundPort: 18080,
       portWasOccupied: false,
+      warnings: [] as string[],
       errors: [] as string[],
     };
 

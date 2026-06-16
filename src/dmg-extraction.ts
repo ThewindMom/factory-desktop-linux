@@ -99,17 +99,22 @@ export function extractFromDmg(
         timeout: 120000,
       });
     } catch (err) {
-      // Some paths may not exist (e.g., droid binary) - that's okay for now
-      // The next features will handle droid binary extraction separately
+      // Required paths: app.asar and the app's own Info.plist must exist.
+      // The Electron Framework Info.plist is optional — some DMGs may not
+      // include it, and we can fall back to ASAR devDependencies for the
+      // Electron version. Icons and droid binary are also optional here.
+      const isAppInfoPlist =
+        dmgPath_entry === DMG_CONTENT_PATHS.infoPlist;
       if (
         dmgPath_entry.includes("app.asar") ||
-        dmgPath_entry.includes("Info.plist")
+        isAppInfoPlist
       ) {
         throw new Error(
           `Failed to extract required path "${dmgPath_entry}" from DMG: ${String(err)}`
         );
       }
-      // Optional paths (icons, etc.) fail gracefully with a warning
+      // Optional paths (Electron Framework plist, icons, etc.) fail
+      // gracefully with a warning and are reported in the returned list.
       failedPaths.push(dmgPath_entry);
     }
   }
