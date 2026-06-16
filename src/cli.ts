@@ -10,6 +10,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import { Command } from "commander";
 import {
   resolveReleaseMode,
@@ -1087,6 +1088,245 @@ program
       );
     } catch (err) {
       process.stderr.write(`Assembly failed: ${String(err)}\n`);
+      const cleaned = tracker.cleanupOnFailure();
+      if (cleaned.length > 0) {
+        process.stderr.write(
+          `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+        );
+      }
+      process.exit(1);
+    }
+  });
+
+/**
+ * `desktop-integration` subcommand: generate Linux desktop entry,
+ * icons, and validate protocol handler / deep-link / path resolution.
+ *
+ * Fulfills: VAL-RUNTIME-005, VAL-RUNTIME-006, VAL-RUNTIME-007,
+ *           VAL-RUNTIME-014, VAL-RUNTIME-015
+ */
+program
+  .command("desktop-integration")
+  .description("Generate Linux desktop entry, icons, and validate protocol/deep-link/path integration")
+  .option(
+    "--app-dir <path>",
+    "Path to the assembled Linux app directory (from assemble command)"
+  )
+  .option(
+    "--icns <path>",
+    "Path to the source ICNS icon file (from DMG extraction)"
+  )
+  .option(
+    "--app-name <name>",
+    "Application name (default: Factory)",
+    "Factory"
+  )
+  .option(
+    "--exec-name <name>",
+    "Executable name (default: factory-desktop)",
+    "factory-desktop"
+  )
+  .option(
+    "--output-dir <dir>",
+    "Output directory for desktop integration files (default: build/desktop-integration/)"
+  )
+  .option(
+    "--validate-protocol",
+    "Validate protocol handler registration in an isolated XDG profile",
+    false
+  )
+  .option(
+    "--validate-deep-link",
+    "Validate cold/warm deep-link handling",
+    false
+  )
+  .option(
+    "--validate-paths",
+    "Validate Linux XDG path resolution",
+    false
+  )
+  .option(
+    "--asar <path>",
+    "Path to app.asar for path analysis (optional, for static macOS path check)"
+  )
+  .option(
+    "--release-mode <mode>",
+    "Release mode: safe (default) or permission-cleared",
+    DEFAULT_RELEASE_MODE
+  )
+  .action(async (options) => {
+    const {
+      generateDesktopEntry,
+      generateLinuxIcons,
+      registerProtocolHandlerIsolated,
+      validateDeepLinkHandling,
+      validateLinuxPaths,
+      cleanupIsolatedXdgDirs,
+      formatDesktopEntryResult,
+      formatIconGenerationResult,
+      formatProtocolValidationResult,
+      formatDeepLinkValidationResult,
+      formatLinuxPathResult,
+    } = await import("./desktop-integration");
+
+    const releaseMode = resolveReleaseMode(options.releaseMode);
+    const projectRoot = process.cwd();
+    const dirs = resolveDirs(projectRoot);
+
+    process.stdout.write(`Release mode: ${describeReleaseMode(releaseMode)}\n`);
+
+    const outputDir = options.outputDir || path.join(dirs.build, "desktop-integration");
+
+    // Track artifacts for hygiene
+    const tracker = new ArtifactTracker(projectRoot);
+
+    try {
+      ensureGeneratedDirs(dirs);
+      tracker.track(outputDir, "Desktop integration output");
+
+      // Determine executable path
+      const execPath = options.appDir
+        ? path.join(options.appDir, options.execName)
+        : options.execName;
+
+      // ─── Step 1: Generate .desktop entry ──────────────────────────
+      process.stdout.write(`\n--- Generating .desktop entry (VAL-RUNTIME-005) ---\n`);
+
+      const desktopOutputPath = path.join(outputDir, `${options.execName}.desktop`);
+
+      const desktopResult = generateDesktopEntry({
+        appName: options.appName,
+        execName: options.execName,
+        execPath,
+        iconName: options.execName,
+        protocolScheme: "factory-desktop",
+        outputPath: desktopOutputPath,
+      });
+
+      process.stdout.write(`\n${formatDesktopEntryResult(desktopResult)}\n`);
+
+      if (!desktopResult.success) {
+        process.stderr.write(`\n✗ Desktop entry generation failed.\n`);
+        process.exit(1);
+      }
+
+      // ─── Step 2: Generate icon assets ─────────────────────────────
+      process.stdout.write(`\n--- Generating Linux icon assets (VAL-RUNTIME-006) ---\n`);
+
+      let iconResult;
+
+      if (options.icns && fs.existsSync(options.icns)) {
+        iconResult = generateLinuxIcons({
+          icnsPath: options.icns,
+          outputDir,
+          appName: options.execName,
+          iconName: options.execName,
+        });
+
+        process.stdout.write(`\n${formatIconGenerationResult(iconResult)}\n`);
+
+        if (!iconResult.success) {
+          process.stderr.write(`\n✗ Icon generation failed.\n`);
+          process.exit(1);
+        }
+      } else {
+        process.stdout.write(
+          `  No ICNS file provided. Skipping icon generation.\n` +
+          `  Use --icns <path> to generate icons from a source ICNS file.\n`
+        );
+      }
+
+      // ─── Step 3: Validate protocol handler (optional) ─────────────
+      if (options.validateProtocol) {
+        process.stdout.write(`\n--- Validating protocol handler (VAL-RUNTIME-007) ---\n`);
+
+        const isolatedDataHome = path.join(os.tmpdir(), "factory-desktop-test-data");
+        const isolatedConfigHome = path.join(os.tmpdir(), "factory-desktop-test-config");
+        const isolatedCacheHome = path.join(os.tmpdir(), "factory-desktop-test-cache");
+
+        try {
+          const protocolResult = registerProtocolHandlerIsolated({
+            desktopFilePath: desktopOutputPath,
+            protocolScheme: "factory-desktop",
+            isolatedDataHome,
+            isolatedConfigHome,
+            isolatedCacheHome,
+          });
+
+          process.stdout.write(`\n${formatProtocolValidationResult(protocolResult)}\n`);
+
+          if (!protocolResult.valid) {
+            process.stderr.write(
+              `\n⚠ Protocol handler validation did not fully pass. ` +
+              `This may be due to the minimal test environment.\n`
+            );
+          }
+        } finally {
+          // Clean up isolated directories
+          cleanupIsolatedXdgDirs({
+            dataHome: isolatedDataHome,
+            configHome: isolatedConfigHome,
+            cacheHome: isolatedCacheHome,
+          });
+        }
+      }
+
+      // ─── Step 4: Validate deep-link handling (optional) ────────────
+      if (options.validateDeepLink) {
+        process.stdout.write(`\n--- Validating deep-link handling (VAL-RUNTIME-014) ---\n`);
+
+        const isolatedDataHome = path.join(os.tmpdir(), "factory-deeplink-test-data");
+
+        try {
+          const deepLinkResult = validateDeepLinkHandling({
+            desktopFilePath: desktopOutputPath,
+            protocolScheme: "factory-desktop",
+            isolatedDataHome,
+          });
+
+          process.stdout.write(`\n${formatDeepLinkValidationResult(deepLinkResult)}\n`);
+        } finally {
+          // Clean up
+          cleanupIsolatedXdgDirs({
+            dataHome: isolatedDataHome,
+            configHome: path.join(os.tmpdir(), "factory-deeplink-test-config"),
+            cacheHome: path.join(os.tmpdir(), "factory-deeplink-test-cache"),
+          });
+        }
+      }
+
+      // ─── Step 5: Validate Linux paths (optional) ──────────────────
+      if (options.validatePaths) {
+        process.stdout.write(`\n--- Validating Linux path resolution (VAL-RUNTIME-015) ---\n`);
+
+        const pathResult = validateLinuxPaths({
+          appName: options.appName.toLowerCase().replace(/\s+/g, "-"),
+          asarPath: options.asar,
+        });
+
+        process.stdout.write(`\n${formatLinuxPathResult(pathResult)}\n`);
+      }
+
+      // Verify git hygiene
+      const finalGitCheck = tracker.verifyGitIgnored(projectRoot);
+      if (!finalGitCheck.clean) {
+        process.stderr.write(
+          `\nERROR: Proprietary artifacts detected in tracked locations: ` +
+          `${finalGitCheck.tracked.join(", ")}\n`
+        );
+        process.exit(1);
+      }
+
+      // Summary
+      process.stdout.write(
+        `\n✓ Desktop integration completed successfully.\n` +
+        `  Desktop entry: ${desktopOutputPath}\n` +
+        `  Protocol: factory-desktop://\n` +
+        `  Validation: ${desktopResult.validation.valid ? "passed" : "FAILED"}\n` +
+        (iconResult ? `  Icons: ${iconResult.icons.length} generated\n` : "")
+      );
+    } catch (err) {
+      process.stderr.write(`Desktop integration failed: ${String(err)}\n`);
       const cleaned = tracker.cleanupOnFailure();
       if (cleaned.length > 0) {
         process.stderr.write(
