@@ -53,7 +53,7 @@ export class ArtifactTracker {
   track(artifactPath: string, description: string): void {
     const resolved = path.resolve(artifactPath);
     const isAllowed = Array.from(this.allowedDirs).some((dir) =>
-      resolved.startsWith(dir + path.sep)
+      resolved === dir || resolved.startsWith(dir + path.sep)
     );
 
     if (!isAllowed) {

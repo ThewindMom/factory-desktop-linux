@@ -21,6 +21,13 @@ import { validateDmg, validateArm64Dmg } from "./dmg-validator";
 import { ArtifactTracker } from "./artifact-hygiene";
 import { enforceSafeMode, describeReleaseMode } from "./safe-mode";
 import { assertRequiredTools, checkAllTools, checkTool, REQUIRED_TOOLS } from "./tool-check";
+import { resolveVersion, isValidSemver, LATEST_VERSION_URL } from "./version-discovery";
+import {
+  extractDmgPayload,
+  verifyDeterministicExtraction,
+  formatExtractionResult,
+  formatDeterminismResult,
+} from "./dmg-extraction";
 
 const program = new Command();
 
@@ -70,6 +77,7 @@ program
 
 /**
  * `validate` subcommand: validate a DMG input without extracting.
+ * Supports --latest for version discovery.
  */
 program
   .command("validate")
@@ -80,11 +88,19 @@ program
     "Path to macOS arm64 Factory Desktop DMG (optional, for parity checking)"
   )
   .option(
+    "--factory-version <version>",
+    "Factory Desktop version (auto-detected from DMG if omitted)"
+  )
+  .option(
+    "--latest",
+    "Discover the latest Factory Desktop version from the official endpoint"
+  )
+  .option(
     "--release-mode <mode>",
     "Release mode: safe (default) or permission-cleared",
     DEFAULT_RELEASE_MODE
   )
-  .action((options) => {
+  .action(async (options) => {
     const releaseMode = resolveReleaseMode(options.releaseMode);
     process.stdout.write(`Release mode: ${describeReleaseMode(releaseMode)}\n`);
 
@@ -99,6 +115,34 @@ program
       `✓ Valid Factory Desktop DMG: ${options.dmg}\n` +
         `  Discovered version: ${result.version || "unknown"}\n`
     );
+
+    // Resolve version from --latest or --factory-version flag
+    if (options.latest || options.factoryVersion) {
+      const versionResult = await resolveVersion({
+        version: options.factoryVersion,
+        latest: options.latest,
+      });
+
+      if (!versionResult.success) {
+        process.stderr.write(`Version resolution failed: ${versionResult.error}\n`);
+        process.exit(1);
+      }
+
+      process.stdout.write(
+        `  Resolved version: ${versionResult.version}\n` +
+          `  Version source: ${options.latest ? "latest-version endpoint" : "--factory-version flag"}\n`
+      );
+
+      // VAL-EXTRACT-011: Check DMG metadata version matches resolved version
+      const dmgVersion = result.version;
+      if (dmgVersion && versionResult.version && dmgVersion !== versionResult.version) {
+        process.stderr.write(
+          `\nWARNING: DMG filename version "${dmgVersion}" does not match ` +
+          `resolved version "${versionResult.version}".\n` +
+          `Use --version-override with the extract command to proceed despite the mismatch.\n`
+        );
+      }
+    }
 
     // Validate arm64 DMG if provided
     if (options.arm64Dmg) {
@@ -117,6 +161,9 @@ program
 
 /**
  * `extract` subcommand: extract payloads from a validated DMG.
+ * Supports --latest for version discovery, --version-override for
+ * accepting version mismatches, and --verify-determinism for
+ * deterministic extraction checks.
  */
 program
   .command("extract")
@@ -127,15 +174,27 @@ program
     "Path to macOS arm64 Factory Desktop DMG (optional)"
   )
   .option(
-    "--version <version>",
+    "--factory-version <version>",
     "Factory Desktop version (auto-detected from DMG if omitted)"
+  )
+  .option(
+    "--latest",
+    "Discover the latest Factory Desktop version from the official endpoint"
+  )
+  .option(
+    "--version-override",
+    "Allow version mismatch between requested version and DMG metadata"
+  )
+  .option(
+    "--verify-determinism",
+    "Run extraction twice to verify deterministic results"
   )
   .option(
     "--release-mode <mode>",
     "Release mode: safe (default) or permission-cleared",
     DEFAULT_RELEASE_MODE
   )
-  .action((options) => {
+  .action(async (options) => {
     const releaseMode = resolveReleaseMode(options.releaseMode);
     const projectRoot = process.cwd();
     const dirs = resolveDirs(projectRoot);
@@ -152,11 +211,60 @@ program
       process.exit(1);
     }
 
-    const version = options.version || validation.version;
     process.stdout.write(
-      `✓ Valid Factory Desktop DMG: ${options.dmg}\n` +
-        `  Version: ${version || "unknown"}\n`
+      `✓ Valid Factory Desktop DMG: ${options.dmg}\n`
     );
+
+    // Resolve the selected version
+    let selectedVersion: string;
+
+    if (options.latest) {
+      // VAL-EXTRACT-002: Latest version discovery
+      process.stdout.write(`\nDiscovering latest Factory Desktop version...\n`);
+      const versionResult = await resolveVersion({
+        latest: true,
+      });
+
+      if (!versionResult.success) {
+        // VAL-EXTRACT-010: Safe failure on latest-version errors
+        process.stderr.write(
+          `Latest-version discovery failed: ${versionResult.error}\n`
+        );
+        process.exit(1);
+      }
+
+      selectedVersion = versionResult.version!;
+      process.stdout.write(
+        `✓ Latest Factory Desktop version: ${selectedVersion}\n` +
+          `  Version source: ${LATEST_VERSION_URL}\n`
+      );
+    } else if (options.factoryVersion) {
+      // Explicit version from --factory-version flag
+      if (!isValidSemver(options.factoryVersion)) {
+        process.stderr.write(
+          `Invalid version format: "${options.factoryVersion}". Expected semver (X.Y.Z).\n`
+        );
+        process.exit(1);
+      }
+      selectedVersion = options.factoryVersion;
+      process.stdout.write(
+        `  Selected version: ${selectedVersion} (from --factory-version flag)\n`
+      );
+    } else {
+      // Auto-detect from DMG filename
+      selectedVersion = validation.version || "unknown";
+      if (selectedVersion !== "unknown") {
+        process.stdout.write(
+          `  Selected version: ${selectedVersion} (auto-detected from DMG)\n`
+        );
+      } else {
+        process.stderr.write(
+          `Cannot determine Factory Desktop version. ` +
+          `Use --factory-version <X.Y.Z> or --latest.\n`
+        );
+        process.exit(1);
+      }
+    }
 
     // Track artifacts for hygiene
     const tracker = new ArtifactTracker(projectRoot);
@@ -197,6 +305,121 @@ program
       process.stdout.write(
         `\n✓ Artifact hygiene verified: no proprietary payloads in tracked source locations.\n`
       );
+
+      // Extract DMG payload with metadata validation
+      process.stdout.write(`\nExtracting DMG payload...\n`);
+
+      const extractDir = path.join(workDir, "extracted");
+      const extractResult = extractDmgPayload(options.dmg, extractDir, {
+        selectedVersion,
+        versionOverride: options.versionOverride || false,
+        extractIcons: true,
+      });
+
+      if (!extractResult.success) {
+        process.stderr.write(
+          `Extraction failed: ${extractResult.error}\n`
+        );
+        const cleaned = tracker.cleanupOnFailure();
+        if (cleaned.length > 0) {
+          process.stderr.write(
+            `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+          );
+        }
+        process.exit(1);
+      }
+
+      // Display extraction results
+      process.stdout.write(`\n${formatExtractionResult(extractResult)}\n`);
+
+      // VAL-EXTRACT-004: Package metadata validation
+      if (extractResult.metadataValidation) {
+        if (!extractResult.metadataValidation.valid) {
+          process.stderr.write(
+            `\n✗ Package metadata validation failed:\n`
+          );
+          for (const err of extractResult.metadataValidation.errors) {
+            process.stderr.write(`  - ${err}\n`);
+          }
+          if (!options.versionOverride) {
+            const cleaned = tracker.cleanupOnFailure();
+            if (cleaned.length > 0) {
+              process.stderr.write(
+                `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+              );
+            }
+            process.exit(1);
+          } else {
+            process.stderr.write(
+              `  Continuing due to --version-override.\n`
+            );
+          }
+        }
+      }
+
+      // VAL-EXTRACT-011: Version mismatch check
+      if (
+        extractResult.dmgVersion &&
+        extractResult.dmgVersion !== selectedVersion &&
+        !options.versionOverride
+      ) {
+        process.stderr.write(
+          `\nERROR: DMG metadata version "${extractResult.dmgVersion}" ` +
+          `does not match selected version "${selectedVersion}".\n` +
+          `Use --version-override to proceed despite the mismatch.\n`
+        );
+        const cleaned = tracker.cleanupOnFailure();
+        if (cleaned.length > 0) {
+          process.stderr.write(
+            `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+          );
+        }
+        process.exit(1);
+      }
+
+      // VAL-EXTRACT-008: Deterministic extraction check
+      if (options.verifyDeterminism) {
+        process.stdout.write(`\nVerifying deterministic extraction...\n`);
+
+        // Clean the second extraction directory
+        const determinismWorkDir = path.join(workDir, "determinism-check");
+        if (fs.existsSync(determinismWorkDir)) {
+          fs.rmSync(determinismWorkDir, { recursive: true, force: true });
+        }
+
+        const determinismResult = verifyDeterministicExtraction(
+          options.dmg,
+          determinismWorkDir,
+          selectedVersion
+        );
+
+        process.stdout.write(
+          `\n${formatDeterminismResult(determinismResult)}\n`
+        );
+
+        if (!determinismResult.deterministic) {
+          process.stderr.write(
+            `\n✗ Deterministic extraction check failed. ` +
+            `Extraction is not reproducible with identical inputs.\n`
+          );
+          process.exit(1);
+        }
+      }
+
+      // Final git status check
+      const finalGitCheck = tracker.verifyGitIgnored(projectRoot);
+      if (!finalGitCheck.clean) {
+        process.stderr.write(
+          `\nERROR: Proprietary artifacts detected in tracked locations after extraction: ` +
+          `${finalGitCheck.tracked.join(", ")}\n`
+        );
+        process.exit(1);
+      }
+
+      process.stdout.write(
+        `\n✓ Extraction complete. All payloads are in generated directories.\n` +
+          `  No proprietary artifacts in tracked source locations.\n`
+      );
     } catch (err) {
       process.stderr.write(`Extraction failed: ${String(err)}\n`);
       const cleaned = tracker.cleanupOnFailure();
@@ -207,6 +430,52 @@ program
       }
       process.exit(1);
     }
+  });
+
+/**
+ * `discover-version` subcommand: query the Factory Desktop latest-version endpoint.
+ *
+ * VAL-EXTRACT-002: Reports the resolved version value.
+ * VAL-EXTRACT-010: Safe failure on malformed responses.
+ */
+program
+  .command("discover-version")
+  .description("Discover the latest Factory Desktop version from the official endpoint")
+  .option(
+    "--url <url>",
+    "Override the latest-version endpoint URL (for testing)",
+    LATEST_VERSION_URL
+  )
+  .option(
+    "--timeout <ms>",
+    "Request timeout in milliseconds",
+    "15000"
+  )
+  .action(async (options) => {
+    const timeoutMs = parseInt(options.timeout, 10);
+    if (isNaN(timeoutMs) || timeoutMs <= 0) {
+      process.stderr.write(`Invalid timeout: ${options.timeout}. Must be a positive integer.\n`);
+      process.exit(1);
+    }
+
+    process.stdout.write(`Querying latest-version endpoint: ${options.url}\n`);
+
+    const result = await resolveVersion({
+      latest: true,
+      latestVersionUrl: options.url,
+      timeoutMs,
+    });
+
+    if (!result.success) {
+      process.stderr.write(`\nLatest-version discovery failed: ${result.error}\n`);
+      process.exit(1);
+    }
+
+    process.stdout.write(
+      `\n✓ Latest Factory Desktop version: ${result.version}\n` +
+        `  Endpoint: ${options.url}\n` +
+        `  This version will be used for build inputs.\n`
+    );
   });
 
 /**
