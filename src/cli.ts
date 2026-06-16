@@ -901,4 +901,200 @@ program
     );
   });
 
+/**
+ * `assemble` subcommand: assemble a Linux Electron app directory.
+ *
+ * Takes extracted app.asar and resolved Linux droid, assembles a
+ * complete Linux Electron app directory with proper layout.
+ *
+ * Fulfills: VAL-RUNTIME-001, VAL-RUNTIME-002, VAL-RUNTIME-003,
+ *           VAL-RUNTIME-010, VAL-RUNTIME-011, VAL-RUNTIME-016
+ */
+program
+  .command("assemble")
+  .description("Assemble a Linux Electron app directory from extracted app.asar and resolved droid")
+  .requiredOption("--asar <path>", "Path to extracted app.asar file")
+  .requiredOption("--droid <path>", "Path to resolved Linux droid ELF binary")
+  .option(
+    "--asar-hash <hash>",
+    "Expected SHA-256 hash of the app.asar file (for integrity verification)"
+  )
+  .option(
+    "--factory-version <version>",
+    "Factory Desktop version for the assembled app"
+  )
+  .option(
+    "--electron-version <version>",
+    "Electron version to use (default: 39.2.7)",
+    "39.2.7"
+  )
+  .option(
+    "--app-name <name>",
+    "Application name for the executable (default: factory-desktop)",
+    "factory-desktop"
+  )
+  .option(
+    "--output-dir <dir>",
+    "Output directory for the assembled app (default: build/)"
+  )
+  .option(
+    "--electron-dist <path>",
+    "Override the Electron dist directory (for testing)"
+  )
+  .option(
+    "--release-mode <mode>",
+    "Release mode: safe (default) or permission-cleared",
+    DEFAULT_RELEASE_MODE
+  )
+  .action(async (options) => {
+    // Dynamic import to avoid loading the module unless needed
+    const {
+      assembleLinuxRuntime,
+      validateRuntimeLayout,
+      validateAsarIntact,
+      validateDroidBinary,
+      validateSharedLibraries,
+      checkResourcesPathResolution,
+      checkLaunchRequirements,
+      formatAssemblyResult,
+      formatLayoutResult,
+      formatAsarIntactResult,
+      formatDroidBinaryResult,
+      formatSharedLibResult,
+      formatResourcesPathResult,
+      formatLaunchRequirementsResult,
+    } = await import("./runtime-assembly");
+
+    const releaseMode = resolveReleaseMode(options.releaseMode);
+    const projectRoot = process.cwd();
+    const dirs = resolveDirs(projectRoot);
+
+    process.stdout.write(`Release mode: ${describeReleaseMode(releaseMode)}\n`);
+
+    // Validate inputs
+    if (!fs.existsSync(options.asar)) {
+      process.stderr.write(`app.asar not found: ${options.asar}\n`);
+      process.exit(1);
+    }
+
+    if (!fs.existsSync(options.droid)) {
+      process.stderr.write(`Droid binary not found: ${options.droid}\n`);
+      process.exit(1);
+    }
+
+    // Compute asar hash if not provided
+    let asarHash = options.asarHash;
+    if (!asarHash) {
+      const asarContent = fs.readFileSync(options.asar);
+      const crypto = await import("crypto");
+      asarHash = crypto
+        .createHash("sha256")
+        .update(asarContent)
+        .digest("hex");
+      process.stdout.write(`  Computed app.asar hash: ${asarHash}\n`);
+    }
+
+    // Determine output directory
+    const outputDir = options.outputDir || dirs.build;
+
+    process.stdout.write(
+      `\nAssembling Linux Electron runtime...\n` +
+        `  app.asar: ${options.asar}\n` +
+        `  droid: ${options.droid}\n` +
+        `  Electron version: ${options.electronVersion}\n` +
+        `  App name: ${options.appName}\n` +
+        `  Output: ${outputDir}\n`
+    );
+
+    // Track artifacts for hygiene
+    const tracker = new ArtifactTracker(projectRoot);
+
+    try {
+      ensureGeneratedDirs(dirs);
+      tracker.track(outputDir, "Assembled Linux app");
+
+      // Assemble the Linux Electron runtime
+      const result = assembleLinuxRuntime({
+        asarPath: options.asar,
+        asarHash,
+        droidPath: options.droid,
+        outputDir,
+        electronVersion: options.electronVersion,
+        appName: options.appName,
+        electronDistOverride: options.electronDist,
+      });
+
+      // Display results
+      process.stdout.write(`\n${formatAssemblyResult(result)}\n`);
+
+      if (!result.success) {
+        process.stderr.write(
+          `\n✗ Linux Electron runtime assembly failed.\n`
+        );
+        const cleaned = tracker.cleanupOnFailure();
+        if (cleaned.length > 0) {
+          process.stderr.write(
+            `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+          );
+        }
+        process.exit(1);
+      }
+
+      // Run detailed validations and display results
+      process.stdout.write(`\n--- Detailed Validation ---\n`);
+
+      const layoutResult = validateRuntimeLayout(result.appDir);
+      process.stdout.write(`\n${formatLayoutResult(layoutResult)}\n`);
+
+      const asarIntactResult = validateAsarIntact(result.appDir, asarHash);
+      process.stdout.write(`\n${formatAsarIntactResult(asarIntactResult)}\n`);
+
+      const droidBinaryResult = validateDroidBinary(result.appDir);
+      process.stdout.write(`\n${formatDroidBinaryResult(droidBinaryResult)}\n`);
+
+      const sharedLibResult = validateSharedLibraries(result.appDir);
+      process.stdout.write(`\n${formatSharedLibResult(sharedLibResult)}\n`);
+
+      const resourcesPathResult = checkResourcesPathResolution(result.appDir);
+      process.stdout.write(`\n${formatResourcesPathResult(resourcesPathResult)}\n`);
+
+      // Verify git hygiene
+      const finalGitCheck = tracker.verifyGitIgnored(projectRoot);
+      if (!finalGitCheck.clean) {
+        process.stderr.write(
+          `\nERROR: Proprietary artifacts detected in tracked locations: ` +
+          `${finalGitCheck.tracked.join(", ")}\n`
+        );
+        process.exit(1);
+      }
+
+      // VAL-RUNTIME-010: Check normal launch requirements
+      process.stdout.write(`\n--- Launch Requirements Check (VAL-RUNTIME-010) ---\n`);
+      const launchResult = checkLaunchRequirements(result.appDir);
+      process.stdout.write(`\n${formatLaunchRequirementsResult(launchResult)}\n`);
+
+      // Summary
+      process.stdout.write(
+        `\n✓ Linux Electron runtime assembled successfully.\n` +
+        `  App directory: ${result.appDir}\n` +
+        `  Executable: ${result.executablePath}\n` +
+        `  Layout: ${layoutResult.isLinuxLayout ? "Linux" : "non-standard"}\n` +
+        `  ASAR intact: ${asarIntactResult.intact ? "yes" : "no"}\n` +
+        `  Droid valid: ${droidBinaryResult.valid ? "yes" : "no"}\n` +
+        `  Shared libs: ${sharedLibResult.valid ? "all resolvable" : "MISSING: " + sharedLibResult.missingLibs.join(", ")}\n` +
+        `  Resources path: ${resourcesPathResult.valid ? "correct" : "incorrect"}\n` +
+        `  Normal launch: ${launchResult.normalLaunchPossible ? "yes" : "requires --no-sandbox (documented)"}\n`
+      );
+    } catch (err) {
+      process.stderr.write(`Assembly failed: ${String(err)}\n`);
+      const cleaned = tracker.cleanupOnFailure();
+      if (cleaned.length > 0) {
+        process.stderr.write(
+          `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
+        );
+      }
+      process.exit(1);
+    }
+  });
+
 program.parse();
