@@ -190,5 +190,62 @@ describe("updater-redirect", () => {
       expect(formatted).toContain("feed URL");
       expect(formatted).toContain("github.com");
     });
+
+    test("auto-update output is not contradictory when disabled with updater code absent", () => {
+      // Construct a result where updaterDisabled=true and autoUpdateEnabled
+      // should be false despite the user requesting it
+      const result = configureUpdaterRedirect({
+        repoOwner: "test-owner",
+        repoName: "test-repo",
+        enableAutoUpdate: true,
+      });
+
+      // Manually override to simulate the contradictory case
+      const contradictoryResult = {
+        ...result,
+        autoUpdateEnabled: false,  // must be false when updater is disabled
+        updaterDisabled: true,
+        wouldCrash: false,
+      };
+
+      const formatted = formatUpdaterRedirectResult(contradictoryResult);
+
+      // Auto-update line should explain WHY it's disabled, not just say "no"
+      expect(formatted).toContain("disabled (no auto-updater code found");
+      expect(formatted).toContain("Updater code present: no");
+      // Should NOT contain contradictory "enabled: yes" alongside "disabled"
+      expect(formatted).not.toMatch(/Auto-update.*enabled.*yes/i);
+    });
+
+    test("auto-update output shows crash reason when updater would crash", () => {
+      const result = configureUpdaterRedirect({
+        repoOwner: "test-owner",
+        repoName: "test-repo",
+        enableAutoUpdate: true,
+      });
+
+      const crashResult = {
+        ...result,
+        autoUpdateEnabled: false,
+        wouldCrash: true,
+        updaterDisabled: false,
+      };
+
+      const formatted = formatUpdaterRedirectResult(crashResult);
+
+      expect(formatted).toContain("disabled (updater code would crash");
+    });
+
+    test("auto-update shows enabled when safe and available", () => {
+      const result = configureUpdaterRedirect({
+        repoOwner: "test-owner",
+        repoName: "test-repo",
+        enableAutoUpdate: true,
+      });
+
+      const formatted = formatUpdaterRedirectResult(result);
+
+      expect(formatted).toContain("Auto-update: enabled");
+    });
   });
 });

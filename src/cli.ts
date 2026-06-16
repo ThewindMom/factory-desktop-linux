@@ -2154,7 +2154,7 @@ program
   .command("release-metadata")
   .description("Generate GitHub Releases update metadata for Linux artifacts")
   .option(
-    "--version <version>",
+    "--release-version <version>",
     "Factory Desktop version for the release"
   )
   .option(
@@ -2205,8 +2205,8 @@ program
 
     const releaseMode = resolveReleaseMode(options.releaseMode);
 
-    if (!options.version) {
-      process.stderr.write("Error: --version is required.\n");
+    if (!options.releaseVersion) {
+      process.stderr.write("Error: --release-version is required.\n");
       process.exit(1);
     }
 
@@ -2233,13 +2233,13 @@ program
 
     process.stdout.write(
       `Generating release metadata...\n` +
-      `  Version: ${options.version}\n` +
+      `  Version: ${options.releaseVersion}\n` +
       `  Release mode: ${describeReleaseMode(releaseMode)}\n` +
       `  Artifacts: ${artifactPaths.length}\n`
     );
 
     const result = generateReleaseMetadata({
-      version: options.version,
+      version: options.releaseVersion,
       releaseMode,
       repoOwner: options.repoOwner,
       repoName: options.repoName,

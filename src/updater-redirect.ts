@@ -164,6 +164,16 @@ export function configureUpdaterRedirect(
     );
   }
 
+  // If the updater is disabled (no auto-updater code found in app), auto-update
+  // cannot actually be enabled regardless of the input flag
+  if (options.enableAutoUpdate && updaterDisabled) {
+    warnings.push(
+      "Auto-update was requested via --enable-auto-update, but no auto-updater code " +
+      "was found in the app. Auto-update cannot be enabled; the manual update-check " +
+      "fallback will be used instead."
+    );
+  }
+
   // If the app contacts the official Factory feed, that's a critical violation
   if (contactsOfficialFeed) {
     errors.push(
@@ -187,7 +197,7 @@ export function configureUpdaterRedirect(
   return {
     safe,
     feedUrl,
-    autoUpdateEnabled: options.enableAutoUpdate && !wouldCrash,
+    autoUpdateEnabled: options.enableAutoUpdate && !wouldCrash && !updaterDisabled,
     feedUrlVerified,
     wouldCrash,
     updaterDisabled,
@@ -385,9 +395,20 @@ export function formatUpdaterRedirectResult(result: UpdaterRedirectResult): stri
   lines.push(`Safe: ${result.safe ? "yes" : "no"}`);
   lines.push(`Feed URL: ${result.feedUrl}`);
   lines.push(`Feed URL verified: ${result.feedUrlVerified ? "yes" : "no"}`);
-  lines.push(`Auto-update enabled: ${result.autoUpdateEnabled ? "yes" : "no"}`);
+
+  // Show auto-update status with clear explanation of why it may be disabled
+  if (result.autoUpdateEnabled) {
+    lines.push("Auto-update: enabled");
+  } else if (result.updaterDisabled) {
+    lines.push("Auto-update: disabled (no auto-updater code found in app)");
+  } else if (result.wouldCrash) {
+    lines.push("Auto-update: disabled (updater code would crash on Linux)");
+  } else {
+    lines.push("Auto-update: not requested");
+  }
+
   lines.push(`Updater would crash: ${result.wouldCrash ? "yes" : "no"}`);
-  lines.push(`Updater disabled: ${result.updaterDisabled ? "yes" : "no"}`);
+  lines.push(`Updater code present: ${result.updaterDisabled ? "no" : "yes"}`);
   lines.push(`Safe update-check path: ${result.hasSafeUpdateCheck ? "yes" : "no"}`);
   lines.push(`Contacts official feed: ${result.contactsOfficialFeed ? "YES - CRITICAL" : "no"}`);
 
