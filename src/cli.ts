@@ -2143,4 +2143,414 @@ program
     );
   });
 
+/**
+ * `release-metadata` subcommand: generate GitHub Releases metadata
+ * for Linux artifacts.
+ *
+ * VAL-PACKAGE-007: Generates metadata only in permission-cleared mode.
+ * VAL-PACKAGE-012: Validates metadata against updater schema.
+ */
+program
+  .command("release-metadata")
+  .description("Generate GitHub Releases update metadata for Linux artifacts")
+  .option(
+    "--version <version>",
+    "Factory Desktop version for the release"
+  )
+  .option(
+    "--release-mode <mode>",
+    "Release mode: safe (default) or permission-cleared",
+    DEFAULT_RELEASE_MODE
+  )
+  .option(
+    "--repo-owner <owner>",
+    "GitHub repository owner",
+    "factory-droid-desktop-linux-port"
+  )
+  .option(
+    "--repo-name <name>",
+    "GitHub repository name",
+    "factory-droid-desktop-linux-port"
+  )
+  .option(
+    "--channel <channel>",
+    "Release channel (default: latest)",
+    "latest"
+  )
+  .option(
+    "--output-dir <dir>",
+    "Output directory for the metadata file",
+    "dist"
+  )
+  .option(
+    "--release-name <name>",
+    "Release name (optional)"
+  )
+  .option(
+    "--release-notes <notes>",
+    "Release notes (optional)"
+  )
+  .option(
+    "--validate",
+    "Validate generated metadata against updater schema",
+    false
+  )
+  .action(async (options) => {
+    const {
+      generateReleaseMetadata,
+      validateReleaseMetadataCompleteness,
+      formatReleaseMetadataResult,
+    } = await import("./release-metadata");
+    const { validateUpdaterSchema, formatSchemaValidationResult } = await import("./updater-schema");
+
+    const releaseMode = resolveReleaseMode(options.releaseMode);
+
+    if (!options.version) {
+      process.stderr.write("Error: --version is required.\n");
+      process.exit(1);
+    }
+
+    // Find artifacts in the output directory
+    const outputDir = path.resolve(options.outputDir);
+    const artifactPaths: string[] = [];
+
+    if (fs.existsSync(outputDir)) {
+      const entries = fs.readdirSync(outputDir);
+      for (const entry of entries) {
+        if (entry.endsWith(".deb") || entry.endsWith(".AppImage")) {
+          artifactPaths.push(path.join(outputDir, entry));
+        }
+      }
+    }
+
+    if (artifactPaths.length === 0) {
+      process.stderr.write(
+        `No .deb or AppImage artifacts found in ${outputDir}. ` +
+        `Run the package command first.\n`
+      );
+      process.exit(1);
+    }
+
+    process.stdout.write(
+      `Generating release metadata...\n` +
+      `  Version: ${options.version}\n` +
+      `  Release mode: ${describeReleaseMode(releaseMode)}\n` +
+      `  Artifacts: ${artifactPaths.length}\n`
+    );
+
+    const result = generateReleaseMetadata({
+      version: options.version,
+      releaseMode,
+      repoOwner: options.repoOwner,
+      repoName: options.repoName,
+      artifactPaths,
+      outputDir,
+      channel: options.channel,
+      releaseName: options.releaseName,
+      releaseNotes: options.releaseNotes,
+    });
+
+    process.stdout.write(`\n${formatReleaseMetadataResult(result)}\n`);
+
+    if (!result.success) {
+      process.stderr.write(`\n✗ Release metadata generation failed.\n`);
+      process.exit(1);
+    }
+
+    // Validate completeness
+    if (result.document) {
+      const completeness = validateReleaseMetadataCompleteness(
+        result.document,
+        artifactPaths
+      );
+
+      if (!completeness.valid) {
+        process.stderr.write(`\n✗ Metadata completeness validation failed:\n`);
+        for (const error of completeness.errors) {
+          process.stderr.write(`  ✗ ${error}\n`);
+        }
+        process.exit(1);
+      }
+    }
+
+    // Validate against updater schema if requested
+    if (options.validate && result.metadataPath) {
+      process.stdout.write(`\nValidating against updater schema...\n`);
+      const schemaResult = validateUpdaterSchema({
+        metadataPath: result.metadataPath,
+      });
+
+      process.stdout.write(`\n${formatSchemaValidationResult(schemaResult)}\n`);
+
+      if (!schemaResult.valid) {
+        process.stderr.write(`\n✗ Updater schema validation failed.\n`);
+        process.exit(1);
+      }
+
+      process.stdout.write(`\n✓ Updater schema validation passed.\n`);
+    }
+
+    process.stdout.write(`\n✓ Release metadata generated: ${result.metadataPath}\n`);
+  });
+
+/**
+ * `validate-updater` subcommand: validate update metadata against
+ * the electron-updater schema.
+ *
+ * VAL-PACKAGE-012: Validates metadata against the updater schema.
+ */
+program
+  .command("validate-updater")
+  .description("Validate update metadata against the electron-updater schema")
+  .option(
+    "--metadata-path <path>",
+    "Path to the latest-linux.yml file"
+  )
+  .action(async (options) => {
+    const { validateUpdaterSchema, formatSchemaValidationResult } = await import("./updater-schema");
+
+    if (!options.metadataPath) {
+      process.stderr.write("Error: --metadata-path is required.\n");
+      process.exit(1);
+    }
+
+    process.stdout.write(`Validating updater metadata: ${options.metadataPath}\n`);
+
+    const result = validateUpdaterSchema({
+      metadataPath: options.metadataPath,
+    });
+
+    process.stdout.write(`\n${formatSchemaValidationResult(result)}\n`);
+
+    if (!result.valid) {
+      process.stderr.write(`\n✗ Updater schema validation failed.\n`);
+      process.exit(1);
+    }
+
+    process.stdout.write(`\n✓ Updater schema validation passed.\n`);
+  });
+
+/**
+ * `check-updater-redirect` subcommand: verify that the in-app updater
+ * is safely redirected to this project's GitHub Releases.
+ *
+ * VAL-PACKAGE-008: Linux updater never hijacks Factory's official
+ * macOS/Windows feed.
+ */
+program
+  .command("check-updater-redirect")
+  .description("Check that the Linux updater redirects to this project safely")
+  .option(
+    "--repo-owner <owner>",
+    "GitHub repository owner",
+    "factory-droid-desktop-linux-port"
+  )
+  .option(
+    "--repo-name <name>",
+    "GitHub repository name",
+    "factory-droid-desktop-linux-port"
+  )
+  .option(
+    "--channel <channel>",
+    "Release channel (default: latest)",
+    "latest"
+  )
+  .option(
+    "--enable-auto-update",
+    "Whether to enable auto-update for Linux",
+    false
+  )
+  .option(
+    "--custom-feed-url <url>",
+    "Custom feed URL override"
+  )
+  .option(
+    "--asar <path>",
+    "Path to app.asar for updater pattern analysis"
+  )
+  .action(async (options) => {
+    const {
+      configureUpdaterRedirect,
+      formatUpdaterRedirectResult,
+    } = await import("./updater-redirect");
+
+    process.stdout.write(`Checking updater redirect configuration...\n`);
+
+    const result = configureUpdaterRedirect({
+      repoOwner: options.repoOwner,
+      repoName: options.repoName,
+      channel: options.channel,
+      enableAutoUpdate: options.enableAutoUpdate,
+      customFeedUrl: options.customFeedUrl,
+      asarPath: options.asar,
+    });
+
+    process.stdout.write(`\n${formatUpdaterRedirectResult(result)}\n`);
+
+    if (!result.safe) {
+      process.stderr.write(`\n✗ Updater redirect is not safe.\n`);
+      process.exit(1);
+    }
+
+    process.stdout.write(`\n✓ Updater redirect is safely configured.\n`);
+  });
+
+/**
+ * `update-guidance` subcommand: generate permission-aware update guidance.
+ *
+ * VAL-PACKAGE-014: Update guidance reflects release permission state.
+ * VAL-PACKAGE-009: Manual fallback reports correct guidance.
+ */
+program
+  .command("update-guidance")
+  .description("Generate permission-aware update guidance")
+  .option(
+    "--current-version <version>",
+    "Current installed Factory Desktop version"
+  )
+  .option(
+    "--latest-version <version>",
+    "Latest available Factory Desktop version (null if unknown)"
+  )
+  .option(
+    "--release-mode <mode>",
+    "Release mode: safe (default) or permission-cleared",
+    DEFAULT_RELEASE_MODE
+  )
+  .option(
+    "--repo-owner <owner>",
+    "GitHub repository owner (for binary download URLs)"
+  )
+  .option(
+    "--repo-name <name>",
+    "GitHub repository name (for binary download URLs)"
+  )
+  .option(
+    "--updater-redirect-safe",
+    "Whether the in-app updater can be safely redirected",
+    false
+  )
+  .option(
+    "--check-failed",
+    "Whether the update check failed",
+    false
+  )
+  .option(
+    "--droid-version <version>",
+    "Current droid CLI version"
+  )
+  .option(
+    "--droid-latest-version <version>",
+    "Latest droid CLI version"
+  )
+  .action(async (options) => {
+    const { generateUpdateGuidance, formatUpdateGuidance } = await import("./update-guidance");
+
+    const releaseMode = resolveReleaseMode(options.releaseMode);
+
+    if (!options.currentVersion) {
+      process.stderr.write("Error: --current-version is required.\n");
+      process.exit(1);
+    }
+
+    const updateAvailable = options.latestVersion
+      ? options.currentVersion !== options.latestVersion
+      : false;
+
+    const droidDrift = options.droidVersion && options.droidLatestVersion
+      ? options.droidVersion !== options.droidLatestVersion
+      : false;
+
+    const result = generateUpdateGuidance({
+      currentVersion: options.currentVersion,
+      latestVersion: options.latestVersion || null,
+      updateAvailable,
+      releaseMode,
+      repoOwner: options.repoOwner,
+      repoName: options.repoName,
+      updaterRedirectSafe: options.updaterRedirectSafe,
+      checkSucceeded: !options.checkFailed,
+      droidVersionInfo: options.droidVersion ? {
+        currentVersion: options.droidVersion,
+        latestVersion: options.droidLatestVersion || null,
+        drift: droidDrift,
+      } : undefined,
+    });
+
+    process.stdout.write(`\n${formatUpdateGuidance(result)}\n`);
+  });
+
+/**
+ * `check-version-drift` subcommand: detect and report version drift.
+ *
+ * VAL-CROSS-010: Version drift is surfaced clearly.
+ */
+program
+  .command("check-version-drift")
+  .description("Check for version drift between build inputs and latest versions")
+  .option(
+    "--current-version <version>",
+    "Current Factory Desktop version"
+  )
+  .option(
+    "--droid-version <version>",
+    "Current droid CLI version"
+  )
+  .option(
+    "--droid-latest-version <version>",
+    "Latest droid CLI version (skip API check)"
+  )
+  .option(
+    "--latest-version-url <url>",
+    "Override Factory Desktop latest-version API URL"
+  )
+  .option(
+    "--timeout <ms>",
+    "API request timeout in milliseconds",
+    "15000"
+  )
+  .action(async (options) => {
+    const { detectVersionDrift, formatVersionDriftResult } = await import("./version-drift");
+
+    if (!options.currentVersion) {
+      process.stderr.write("Error: --current-version is required.\n");
+      process.exit(1);
+    }
+
+    process.stdout.write(
+      `Checking for version drift...\n` +
+      `  Current version: ${options.currentVersion}\n`
+    );
+
+    const requestTimeout = parseInt(options.timeout, 10);
+    if (isNaN(requestTimeout) || requestTimeout <= 0) {
+      process.stderr.write(`Invalid timeout: ${options.timeout}. Must be a positive integer.\n`);
+      process.exit(1);
+    }
+
+    const result = await detectVersionDrift({
+      currentDesktopVersion: options.currentVersion,
+      currentDroidVersion: options.droidVersion,
+      droidLatestVersion: options.droidLatestVersion,
+      latestVersionUrl: options.latestVersionUrl,
+      requestTimeout,
+    });
+
+    process.stdout.write(`\n${formatVersionDriftResult(result)}\n`);
+
+    if (result.driftDetected) {
+      process.stdout.write(
+        `\n⚠ Version drift detected. An explicit policy decision is required ` +
+        `before proceeding with these versions.\n`
+      );
+    } else {
+      process.stdout.write(`\n✓ No version drift detected.\n`);
+    }
+
+    // Exit non-zero if policy decision is required
+    if (result.policyDecisionRequired) {
+      process.exit(2);
+    }
+  });
+
 program.parse();
