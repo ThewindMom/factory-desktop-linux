@@ -2560,4 +2560,488 @@ program
     }
   });
 
+/**
+ * `build-all` subcommand: one-command build flow from a valid DMG to
+ * launchable Linux app packages.
+ *
+ * Chains: DMG validation → extraction → droid resolution → runtime assembly →
+ * desktop integration → packaging (deb/AppImage) → optional checksums and
+ * launch validation.
+ *
+ * Fulfills: VAL-CROSS-001 (one-command build from DMG to Linux app).
+ */
+program
+  .command("build-all")
+  .description("One-command build: from DMG to launchable Linux app packages")
+  .requiredOption("--dmg <path>", "Path to macOS x64 Factory Desktop DMG")
+  .option(
+    "--arm64-dmg <path>",
+    "Path to macOS arm64 Factory Desktop DMG (optional, for parity checking)"
+  )
+  .option(
+    "--factory-version <version>",
+    "Factory Desktop version (auto-detected from DMG if omitted)"
+  )
+  .option(
+    "--latest",
+    "Discover the latest Factory Desktop version from the official endpoint"
+  )
+  .option(
+    "--version-override",
+    "Allow version mismatch between requested version and DMG metadata"
+  )
+  .option(
+    "--version-policy <policy>",
+    'Droid version policy: "exact" or "fallback-to-latest" (default)',
+    "fallback-to-latest"
+  )
+  .option(
+    "--targets <targets>",
+    "Comma-separated package targets (deb,appimage)",
+    "deb,appimage"
+  )
+  .option(
+    "--electron-version <version>",
+    "Electron version to use (default: 39.2.7)",
+    "39.2.7"
+  )
+  .option(
+    "--app-name <name>",
+    "Application name (default: Factory)",
+    "Factory"
+  )
+  .option(
+    "--exec-name <name>",
+    "Executable name (default: factory-desktop)",
+    "factory-desktop"
+  )
+  .option(
+    "--validate",
+    "Validate each build step and package contents",
+    false
+  )
+  .option(
+    "--checksums",
+    "Generate SHA-256 checksums for all release artifacts",
+    true
+  )
+  .option(
+    "--test-launch",
+    "Test that packaged artifacts launch from extracted contexts",
+    false
+  )
+  .option(
+    "--validate-ui",
+    "Validate that the built app launches and shows the Factory UI shell",
+    false
+  )
+  .option(
+    "--release-mode <mode>",
+    "Release mode: safe (default) or permission-cleared",
+    DEFAULT_RELEASE_MODE
+  )
+  .action(async (options) => {
+    const releaseMode = resolveReleaseMode(options.releaseMode);
+    const projectRoot = process.cwd();
+    const dirs = resolveDirs(projectRoot);
+    const targets = options.targets.split(",").map((t: string) => t.trim());
+
+    process.stdout.write(
+      `\n╔══════════════════════════════════════════════════════════════╗\n` +
+      `║  Factory Linux Builder — One-Command Build (VAL-CROSS-001) ║\n` +
+      `╚══════════════════════════════════════════════════════════════╝\n\n` +
+      `Release mode: ${describeReleaseMode(releaseMode)}\n` +
+      `DMG: ${options.dmg}\n` +
+      `Targets: ${targets.join(", ")}\n` +
+      `Electron: ${options.electronVersion}\n`
+    );
+
+    // Track artifacts for hygiene
+    const tracker = new ArtifactTracker(projectRoot);
+
+    try {
+      ensureGeneratedDirs(dirs);
+      tracker.track(dirs.work, "Extraction workspace");
+      tracker.track(dirs.build, "Assembled Linux app");
+      tracker.track(dirs.dist, "Package artifacts");
+      tracker.track(dirs.out, "Packaging output");
+
+      // ─── Step 1: Validate DMG ────────────────────────────────────
+      process.stdout.write(`\n─── Step 1/6: Validating DMG ───────────────────────────────\n`);
+
+      const validation = validateDmg(options.dmg);
+      if (!validation.valid) {
+        process.stderr.write(`DMG validation failed: ${validation.error}\n`);
+        process.exit(1);
+      }
+
+      process.stdout.write(`✓ Valid Factory Desktop DMG: ${options.dmg}\n`);
+
+      // ─── Step 2: Extract + Resolve Version ──────────────────────
+      process.stdout.write(`\n─── Step 2/6: Extracting payloads ──────────────────────────\n`);
+
+      // Resolve selected version
+      let selectedVersion: string;
+      if (options.latest) {
+        process.stdout.write(`Discovering latest Factory Desktop version...\n`);
+        const versionResult = await resolveVersion({ latest: true });
+        if (!versionResult.success) {
+          process.stderr.write(`Latest-version discovery failed: ${versionResult.error}\n`);
+          process.exit(1);
+        }
+        selectedVersion = versionResult.version!;
+        process.stdout.write(`✓ Latest version: ${selectedVersion}\n`);
+      } else if (options.factoryVersion) {
+        if (!isValidSemver(options.factoryVersion)) {
+          process.stderr.write(`Invalid version format: "${options.factoryVersion}". Expected semver (X.Y.Z).\n`);
+          process.exit(1);
+        }
+        selectedVersion = options.factoryVersion;
+        process.stdout.write(`✓ Selected version: ${selectedVersion} (from --factory-version)\n`);
+      } else {
+        selectedVersion = validation.version || "unknown";
+        if (selectedVersion === "unknown") {
+          process.stderr.write(`Cannot determine version. Use --factory-version or --latest.\n`);
+          process.exit(1);
+        }
+        process.stdout.write(`✓ Detected version: ${selectedVersion} (from DMG)\n`);
+      }
+
+      // Check required tools
+      assertRequiredTools();
+
+      // Extract DMG payload
+      const extractDir = path.join(dirs.work, "extracted");
+      const extractResult = extractDmgPayload(options.dmg, extractDir, {
+        selectedVersion,
+        versionOverride: options.versionOverride || false,
+        extractIcons: true,
+      });
+
+      if (!extractResult.success) {
+        process.stderr.write(`Extraction failed: ${extractResult.error}\n`);
+        process.exit(1);
+      }
+
+      const asarPath = extractResult.asarPath!;
+      const asarHash = extractResult.asarHash!;
+      const icnsPath = path.join(
+        extractDir,
+        "Factory/Factory.app/Contents/Resources/electron.icns"
+      );
+
+      process.stdout.write(`✓ Extracted app.asar: ${asarPath}\n`);
+      process.stdout.write(`  ASAR hash: ${asarHash}\n`);
+
+      // Version mismatch check
+      if (
+        extractResult.dmgVersion &&
+        extractResult.dmgVersion !== selectedVersion &&
+        !options.versionOverride
+      ) {
+        process.stderr.write(
+          `ERROR: DMG version "${extractResult.dmgVersion}" != selected "${selectedVersion}". ` +
+          `Use --version-override to proceed.\n`
+        );
+        process.exit(1);
+      }
+
+      // Parity check with arm64 DMG
+      if (options.arm64Dmg) {
+        process.stdout.write(`Checking arm64 parity...\n`);
+        const parityWorkDir = path.join(dirs.work, "parity-check");
+        if (fs.existsSync(parityWorkDir)) {
+          fs.rmSync(parityWorkDir, { recursive: true, force: true });
+        }
+        fs.mkdirSync(parityWorkDir, { recursive: true });
+
+        const parityResult = compareAsarParity(options.dmg, options.arm64Dmg, parityWorkDir);
+        process.stdout.write(`✓ Arm64 parity: ${parityResult.valid ? "match" : "MISMATCH"}\n`);
+
+        if (!parityResult.valid) {
+          process.stderr.write(`✗ Arm64 app.asar parity check failed.\n`);
+          process.exit(1);
+        }
+      }
+
+      // ─── Step 3: Resolve Linux Droid ────────────────────────────
+      process.stdout.write(`\n─── Step 3/6: Resolving Linux droid binary ────────────────\n`);
+
+      const droidOutputDir = path.join(dirs.work, "droid");
+      let versionPolicy: VersionPolicy;
+      if (options.versionPolicy === "exact") {
+        versionPolicy = VersionPolicy.Exact;
+      } else {
+        versionPolicy = VersionPolicy.FallbackToLatest;
+      }
+
+      const droidResult = await resolveDroid(selectedVersion, droidOutputDir, {
+        versionPolicy,
+      });
+
+      if (!droidResult.success) {
+        process.stderr.write(`Droid resolution failed: ${droidResult.errors.join("; ")}\n`);
+        process.exit(1);
+      }
+
+      const droidPath = droidResult.droidPath!;
+      process.stdout.write(`✓ Linux droid resolved: ${droidPath}\n`);
+      process.stdout.write(`  Droid version: ${droidResult.droidVersion || "unknown"}\n`);
+
+      // ─── Step 4: Assemble Linux Electron Runtime ────────────────
+      process.stdout.write(`\n─── Step 4/6: Assembling Linux Electron runtime ────────────\n`);
+
+      const {
+        assembleLinuxRuntime,
+        validateRuntimeLayout,
+        validateDroidBinary,
+        validateSharedLibraries,
+      } = await import("./runtime-assembly");
+
+      const assembleResult = assembleLinuxRuntime({
+        asarPath,
+        asarHash,
+        droidPath,
+        outputDir: dirs.build,
+        electronVersion: options.electronVersion,
+        appName: options.execName,
+      });
+
+      if (!assembleResult.success) {
+        process.stderr.write(`Runtime assembly failed.\n`);
+        process.exit(1);
+      }
+
+      const appDir = assembleResult.appDir;
+      process.stdout.write(`✓ Linux app assembled: ${appDir}\n`);
+      process.stdout.write(`  Executable: ${assembleResult.executablePath}\n`);
+
+      // Validate if requested
+      if (options.validate) {
+        const layoutResult = validateRuntimeLayout(appDir);
+        const droidBinaryResult = validateDroidBinary(appDir);
+        const sharedLibResult = validateSharedLibraries(appDir);
+
+        if (!layoutResult.isLinuxLayout) {
+          process.stderr.write(`✗ Runtime layout is not Linux-compatible.\n`);
+          process.exit(1);
+        }
+        if (!droidBinaryResult.valid) {
+          process.stderr.write(`✗ Packaged droid binary is invalid.\n`);
+          process.exit(1);
+        }
+        if (!sharedLibResult.valid) {
+          process.stderr.write(
+            `✗ Shared library issues: ${sharedLibResult.missingLibs.join(", ")}\n`
+          );
+          process.exit(1);
+        }
+        process.stdout.write(`✓ Runtime validation passed.\n`);
+      }
+
+      // ─── Step 5: Desktop Integration ────────────────────────────
+      process.stdout.write(`\n─── Step 5/6: Generating desktop integration ────────────────\n`);
+
+      const {
+        generateDesktopEntry,
+        generateLinuxIcons,
+      } = await import("./desktop-integration");
+
+      const desktopOutputDir = path.join(dirs.build, "desktop-integration");
+      const execPathForDesktop = path.join(appDir, options.execName);
+      const desktopFilePath = path.join(desktopOutputDir, `${options.execName}.desktop`);
+
+      // Generate .desktop entry
+      const desktopResult = generateDesktopEntry({
+        appName: options.appName,
+        execName: options.execName,
+        execPath: execPathForDesktop,
+        iconName: options.execName,
+        protocolScheme: "factory-desktop",
+        outputPath: desktopFilePath,
+        categories: ["Development", "IDE"],
+        comment: "Factory AI Desktop Client",
+      });
+
+      process.stdout.write(
+        `✓ Desktop entry: ${desktopResult.success ? desktopResult.desktopFilePath : "failed"}\n`
+      );
+
+      // Generate icons if ICNS source exists
+      if (fs.existsSync(icnsPath)) {
+        const iconResult = await generateLinuxIcons({
+          icnsPath,
+          outputDir: desktopOutputDir,
+          appName: options.execName,
+          sizes: [16, 24, 32, 48, 64, 128, 256, 512],
+        });
+
+        if (iconResult.success) {
+          process.stdout.write(`✓ Icons generated: ${iconResult.icons.length} sizes\n`);
+        } else {
+          process.stdout.write(`⚠ Icon generation had issues: ${iconResult.errors.join(", ")}\n`);
+        }
+      } else {
+        process.stdout.write(`⚠ No ICNS source found; skipping icon generation.\n`);
+      }
+
+      // ─── Step 6: Package ────────────────────────────────────────
+      process.stdout.write(`\n─── Step 6/6: Packaging ────────────────────────────────────\n`);
+
+      // VAL-PACKAGE-010: Check RPM prerequisites
+      if (targets.includes("rpm")) {
+        const { checkRpmPrerequisites } = await import("./packaging");
+        const rpmCheck = checkRpmPrerequisites();
+        if (!rpmCheck.available) {
+          process.stderr.write(
+            `✗ RPM target is DEFERRED: ${rpmCheck.diagnostic}\n` +
+            `  Remove "rpm" from --targets to proceed.\n`
+          );
+          process.exit(1);
+        }
+      }
+
+      const {
+        buildPackages,
+        generateChecksums,
+        extractDebContext,
+        extractAppImageContext,
+        testExtractedLaunch,
+      } = await import("./packaging");
+
+      const packageResult = buildPackages({
+        appDir,
+        targets,
+        factoryVersion: selectedVersion,
+        appName: options.appName,
+        execName: options.execName,
+        iconPath: path.join(desktopOutputDir, "icons", "hicolor", "512x512", "apps", `${options.execName}.png`),
+        desktopEntryPath: desktopResult.desktopFilePath,
+        outputDir: dirs.dist,
+        releaseMode,
+      });
+
+      if (!packageResult.success) {
+        process.stderr.write(`Packaging failed: ${packageResult.errors.join("; ")}\n`);
+        process.exit(1);
+      }
+
+      process.stdout.write(`✓ Packages built successfully.\n`);
+      for (const artifactPath of packageResult.artifacts) {
+        process.stdout.write(`  ${path.basename(artifactPath)}\n`);
+      }
+
+      // Generate checksums
+      if (options.checksums && packageResult.artifacts.length > 0) {
+        process.stdout.write(`\nGenerating checksums...\n`);
+        const checksumResult = generateChecksums(
+          packageResult.artifacts,
+          dirs.dist
+        );
+        if (checksumResult.success) {
+          process.stdout.write(`✓ Checksums written: ${checksumResult.manifestPath}\n`);
+        }
+      }
+
+      // Test launch from extracted contexts
+      if (options.testLaunch) {
+        process.stdout.write(`\nTesting launch from extracted package contexts...\n`);
+
+        if (packageResult.debPath) {
+          const debCtx = extractDebContext(packageResult.debPath, path.join(dirs.out, "deb-test"));
+          if (debCtx.success) {
+            const launchResult = testExtractedLaunch(debCtx.executablePath, "deb", {
+              timeout: 15000,
+            });
+            process.stdout.write(
+              `  .deb launch: ${launchResult.success ? "✓ passed" : "✗ failed"}\n`
+            );
+          }
+        }
+
+        if (packageResult.appImagePath) {
+          const appCtx = extractAppImageContext(packageResult.appImagePath, path.join(dirs.out, "appimage-test"));
+          if (appCtx.success) {
+            const launchResult = testExtractedLaunch(appCtx.executablePath, "appimage", {
+              timeout: 15000,
+            });
+            process.stdout.write(
+              `  AppImage launch: ${launchResult.success ? "✓ passed" : "✗ failed"}\n`
+            );
+          }
+        }
+      }
+
+      // ─── Optional: Validate UI Shell (VAL-CROSS-002) ────────────
+      if (options.validateUi) {
+        process.stdout.write(
+          `\n─── UI Shell Validation (VAL-CROSS-002) ──────────────────────\n`
+        );
+
+        const {
+          validateUiShell,
+          formatUiShellValidationResult,
+        } = await import("./launch-lifecycle");
+
+        const uiResult = await validateUiShell({
+          appDir,
+          appName: options.execName,
+          noSandbox: true,
+          startupTimeout: 20000,
+          cdpTimeout: 5000,
+        });
+
+        process.stdout.write(`\n${formatUiShellValidationResult(uiResult)}\n`);
+
+        if (!uiResult.success) {
+          process.stderr.write(
+            `\n✗ UI shell validation failed. The app may not be rendering the Factory UI shell.\n`
+          );
+          process.exit(1);
+        }
+
+        process.stdout.write(`✓ UI shell validation passed. The app renders the Factory UI shell.\n`);
+      }
+
+      // ─── Final Hygiene Check ─────────────────────────────────────
+      const gitCheck = tracker.verifyGitIgnored(projectRoot);
+      if (!gitCheck.clean) {
+        process.stderr.write(
+          `ERROR: Proprietary artifacts in tracked locations: ${gitCheck.tracked.join(", ")}\n`
+        );
+        process.exit(1);
+      }
+
+      // ─── Summary ────────────────────────────────────────────────
+      process.stdout.write(
+        `\n╔══════════════════════════════════════════════════════════════╗\n` +
+        `║  Build Complete ✓                                          ║\n` +
+        `╚══════════════════════════════════════════════════════════════╝\n\n` +
+        `  Factory version: ${selectedVersion}\n` +
+        `  App directory:   ${appDir}\n` +
+        `  Droid binary:    ${droidPath}\n` +
+        `  Desktop entry:   ${desktopResult.desktopFilePath}\n` +
+        `  Artifacts:\n`
+      );
+
+      for (const artifactPath of packageResult.artifacts) {
+        process.stdout.write(`    ${path.basename(artifactPath)}\n`);
+      }
+
+      process.stdout.write(
+        `\nTo validate the built app launches and shows the Factory UI shell:\n` +
+        `  node dist/cli.js build-all --dmg ${options.dmg} --factory-version ${selectedVersion} --validate --validate-ui\n\n` +
+        `To launch diagnostics on the assembled app:\n` +
+        `  node dist/cli.js launch-diagnostics --app-dir ${appDir} --all\n`
+      );
+    } catch (err) {
+      process.stderr.write(`Build-all failed: ${String(err)}\n`);
+      const cleaned = tracker.cleanupOnFailure();
+      if (cleaned.length > 0) {
+        process.stderr.write(`Cleaned up partial artifacts: ${cleaned.join(", ")}\n`);
+      }
+      process.exit(1);
+    }
+  });
+
 program.parse();
