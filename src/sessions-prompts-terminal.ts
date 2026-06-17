@@ -120,6 +120,44 @@ const MACOS_PATH_ERROR_PATTERNS = [
   /not found.*macOS/i,
 ];
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Extract PIDs from `ps aux` snapshot lines.
+ * Returns a Set of numeric PIDs parsed from the second column.
+ */
+function extractPidsFromSnapshot(lines: string[]): Set<number> {
+  const pids = new Set<number>();
+  for (const line of lines) {
+    const parts = line.trim().split(/\s+/);
+    const pid = parts.length > 1 ? parseInt(parts[1], 10) : NaN;
+    if (!isNaN(pid)) {
+      pids.add(pid);
+    }
+  }
+  return pids;
+}
+
+/**
+ * Filter process snapshot lines to only those with PIDs not in the
+ * given set of known PIDs. Also excludes the current process and
+ * the `ps` command itself.
+ */
+function filterNewProcessLines(
+  lines: string[],
+  knownPids: Set<number>
+): string[] {
+  return lines.filter((p) => {
+    const parts = p.trim().split(/\s+/);
+    const pid = parts.length > 1 ? parseInt(parts[1], 10) : NaN;
+    if (isNaN(pid)) return false;
+    if (pid === process.pid) return false;
+    // Exclude ps command itself
+    if (p.toLowerCase().includes("ps aux") || p.toLowerCase().includes("ps -ef")) return false;
+    return !knownPids.has(pid);
+  });
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Options for session loading validation */
@@ -1487,7 +1525,10 @@ export async function validateTerminalFlow(
 
     // Check for orphan shell/terminal processes
     // Only match processes whose command line includes our app directory path
-    // to avoid false positives from pre-existing system processes
+    // to avoid false positives from pre-existing system processes.
+    // Use PID-based comparison because ps aux output contains dynamic
+    // fields (CPU%, memory%) that change between snapshots, making
+    // string-based comparison unreliable.
     const processesAfter = captureProcessSnapshot([appName, "electron"]);
     processesAfterCleanup = processesAfter;
 
@@ -1499,9 +1540,11 @@ export async function validateTerminalFlow(
     const testRelatedBefore = processesBefore.filter(
       (p) => new RegExp(appDirPath).test(p)
     );
-    const newProcesses = testRelatedAfter.filter(
-      (p) => !testRelatedBefore.includes(p)
-    );
+
+    // Compare by PID instead of full string to avoid false positives
+    // from dynamic ps aux fields
+    const beforePids = extractPidsFromSnapshot(testRelatedBefore);
+    const newProcesses = filterNewProcessLines(testRelatedAfter, beforePids);
     if (newProcesses.length > 0) {
       noOrphanProcesses = false;
       warnings.push(`Potential orphan processes: ${newProcesses.join("; ")}`);
@@ -1888,7 +1931,9 @@ export async function validatePromptErrors(
     warnings.push(...cleanup.warnings);
     errors.push(...cleanup.errors);
 
-    // Verify no stale processes remain - only check our app-related processes
+    // Verify no stale processes remain - only check our app-related processes.
+    // Use PID-based comparison because ps aux output contains dynamic
+    // fields (CPU%, memory%) that change between snapshots.
     const processesAfter = captureProcessSnapshot([appName, "electron"]);
     const appDirPath = options.appDir.replace(/\//g, "\\/");
     const testRelatedAfter = processesAfter.filter(
@@ -1897,7 +1942,10 @@ export async function validatePromptErrors(
     const testRelatedBefore = processesBefore.filter(
       (p) => new RegExp(appDirPath).test(p)
     );
-    const newProcesses = testRelatedAfter.filter((p) => !testRelatedBefore.includes(p));
+
+    // Compare by PID instead of full string
+    const beforePids = extractPidsFromSnapshot(testRelatedBefore);
+    const newProcesses = filterNewProcessLines(testRelatedAfter, beforePids);
     if (newProcesses.length > 0) {
       noStaleWork = false;
       warnings.push(`Stale processes after prompt error test: ${newProcesses.join("; ")}`);
@@ -2211,7 +2259,9 @@ export async function validateTerminalBlocked(
     warnings.push(...cleanup.warnings);
     errors.push(...cleanup.errors);
 
-    // Check for orphan processes - only match app-related processes
+    // Check for orphan processes - only match app-related processes.
+    // Use PID-based comparison because ps aux output contains dynamic
+    // fields (CPU%, memory%) that change between snapshots.
     const processesAfter = captureProcessSnapshot([appName, "electron"]);
     processesAfterCleanup = processesAfter;
 
@@ -2222,9 +2272,10 @@ export async function validateTerminalBlocked(
     const testRelatedBefore = processesBefore.filter(
       (p) => new RegExp(appDirPath).test(p)
     );
-    const newProcesses = testRelatedAfter.filter(
-      (p) => !testRelatedBefore.includes(p)
-    );
+
+    // Compare by PID instead of full string
+    const beforePids = extractPidsFromSnapshot(testRelatedBefore);
+    const newProcesses = filterNewProcessLines(testRelatedAfter, beforePids);
     if (newProcesses.length > 0) {
       noOrphanProcesses = false;
       partialProcessCleaned = false;
