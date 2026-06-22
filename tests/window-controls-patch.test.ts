@@ -3,7 +3,7 @@
  *
  * Validates VAL-WINDOW-001: The packaged Linux app must have window
  * controls (minimize, maximize, close) by injecting titleBarOverlay
- * on Linux with dark/light theme-aware colors.
+ * on Linux with static dark colors.
  */
 
 import {
