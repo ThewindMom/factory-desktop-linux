@@ -20,6 +20,7 @@
 import type { DaemonTransportPatchResult } from "../daemon-transport-patch";
 import { patchDaemonTransport } from "../daemon-transport-patch";
 import { patchAutoUpdater } from "../auto-updater-patch";
+import { patchWindowControls } from "../window-controls-patch";
 
 // ─── Patch contract ────────────────────────────────────────────────────────
 
@@ -143,10 +144,30 @@ const autoUpdaterPatch: Patch = {
     }),
 };
 
+/**
+ * The window controls patch overrides titleBarStyle to "default" on Linux
+ * so the native window manager draws minimize, maximize, and close buttons.
+ * Without this, the app uses "hidden" titleBarStyle on Linux (because it's
+ * not win32), resulting in no title bar at all.
+ */
+const windowControlsPatch: Patch = {
+  id: "window-controls",
+  description:
+    'Override titleBarStyle to "default" on Linux for native min/max/close ' +
+      "window controls.",
+  apply: (options) =>
+    patchWindowControls({
+      asarPath: options.asarPath,
+      skipIfPatched: options.skipIfPatched,
+      tolerateMissingTarget: options.tolerateMissingTarget,
+    }),
+};
+
 /** All registered core patches, in apply order. */
 export const REGISTERED_PATCHES: ReadonlyArray<Patch> = [
   daemonTransportPatch,
   autoUpdaterPatch,
+  windowControlsPatch,
 ];
 
 // ─── Registry entry point ───────────────────────────────────────────────────

@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  schedule:
+    # Run daily at 08:00 UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    # Manual trigger for testing
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check-version.outputs.latest_version }}
+      should_build: ${{ steps.check-version.outputs.should_build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check upstream version and compare with latest release
+        id: check-version
+        run: |
+          # Query Factory's latest-version endpoint
+          LATEST=$(curl -sf "https://api.factory.ai/api/desktop/latest-version" | jq -r '.latestVersion // empty')
+          if [ -z "$LATEST" ]; then
+            echo "Could not determine latest upstream version. Aborting."
+            exit 1
+          fi
+          echo "Upstream latest version: $LATEST"
+          echo "latest_version=$LATEST" >> $GITHUB_OUTPUT
+
+          # Check if we already have a release for this version
+          if gh release view "v$LATEST" --repo ${{ github.repository }} >/dev/null 2>&1; then
+            echo "Release v$LATEST already exists. Skipping build."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "New version $LATEST detected. Will build."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-release:
+    needs: check-and-release
+    if: needs.check-and-release.outputs.should_build == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full dpkg-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npx tsc
+
+      - name: Build Rust updater
+        run: cd updater && cargo build --release
+
+      - name: Build Linux app and package
+        run: |
+          node dist/cli.js build-all --targets deb
+
+      - name: Verify .deb was produced
+        run: |
+          DEB=$(ls -1t dist/*.deb 2>/dev/null | head -1)
+          if [ -z "$DEB" ]; then
+            echo "No .deb found in dist/" >&2
+            exit 1
+          fi
+          echo "DEB_PATH=$DEB" >> $GITHUB_ENV
+          echo "Produced: $DEB"
+          dpkg-deb --info "$DEB" | grep -E 'Package|Version|Architecture'
+
+      - name: Extract version from .deb
+        run: |
+          VERSION=$(dpkg-deb --info "$DEB_PATH" | grep Version | awk '{print $2}')
+          echo "FACTORY_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Create GitHub release
+        run: |
+          gh release create "v$FACTORY_VERSION" \
+            --title "Factory Desktop $FACTORY_VERSION (Linux)" \
+            --notes "Auto-built from upstream Factory Desktop $FACTORY_VERSION DMG.
+
+          **Includes:**
+          - Linux Electron runtime
+          - Droid CLI binary (from @factory/cli-linux-x64 npm)
+          - Version-agnostic asar patches:
+            - Daemon transport (force WebSocket on Linux)
+            - Auto-updater guard (disable Electron autoUpdater on Linux)
+            - Window controls (force default titleBarStyle on Linux)
+          - Rust auto-update manager (factory-update-manager)
+          - systemd --user service unit
+          - polkit policy
+
+          **Install:**
+          \`\`\`bash
+          sudo dpkg -i factory-desktop_${FACTORY_VERSION}_amd64.deb
+          sudo apt-get install -f -y
+          \`\`\`
+
+          Built by GitHub Actions on $(date -u +%Y-%m-%dT%H:%M:%SZ)." \
+            "$DEB_PATH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload .deb as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-desktop-${{ env.FACTORY_VERSION }}-deb
+          path: dist/*.deb
+          if-no-files-found: warn
