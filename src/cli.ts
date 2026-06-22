@@ -2905,6 +2905,55 @@ program
         ) + "\n"
       );
 
+      // Stage updater files into the app directory so electron-builder's
+      // --prepackaged mode includes them. (extraFiles are NOT processed
+      // with --prepackaged, so we must copy files physically into appDir.)
+      // postinst copies these from the app dir to system paths.
+      if (process.env.PACKAGE_WITH_UPDATER !== "0") {
+        const projectRoot = process.cwd();
+        const updaterStagingDir = path.join(factoryLinuxDir, "updater");
+        fs.mkdirSync(updaterStagingDir, { recursive: true });
+
+        // Updater binary
+        const updaterBinary = path.join(
+          projectRoot, "updater", "target", "release", "factory-update-manager"
+        );
+        if (fs.existsSync(updaterBinary)) {
+          fs.copyFileSync(updaterBinary, path.join(updaterStagingDir, "factory-update-manager"));
+          fs.chmodSync(path.join(updaterStagingDir, "factory-update-manager"), 0o755);
+        }
+
+        // Systemd service unit
+        const serviceFile = path.join(projectRoot, "packaging", "linux", "factory-update-manager.service");
+        if (fs.existsSync(serviceFile)) {
+          fs.copyFileSync(serviceFile, path.join(updaterStagingDir, "factory-update-manager.service"));
+        }
+
+        // Polkit policy
+        const polkitFile = path.join(projectRoot, "packaging", "linux", "org.factory.desktop.update-manager.policy");
+        if (fs.existsSync(polkitFile)) {
+          fs.copyFileSync(polkitFile, path.join(updaterStagingDir, "org.factory.desktop.update-manager.policy"));
+        }
+
+        // Builder checkout for local rebuilds
+        const builderStagingDir = path.join(factoryLinuxDir, "update-builder");
+        fs.mkdirSync(builderStagingDir, { recursive: true });
+        for (const dir of ["dist", "node_modules", "src", "linux-features", "assets"]) {
+          const srcDir = path.join(projectRoot, dir);
+          if (fs.existsSync(srcDir)) {
+            fs.cpSync(srcDir, path.join(builderStagingDir, dir), { recursive: true });
+          }
+        }
+        for (const file of ["package.json", "package-lock.json", "tsconfig.json"]) {
+          const srcFile = path.join(projectRoot, file);
+          if (fs.existsSync(srcFile)) {
+            fs.copyFileSync(srcFile, path.join(builderStagingDir, file));
+          }
+        }
+
+        process.stdout.write(`✓ Updater files staged in app directory\n`);
+      }
+
       // Validate if requested
       if (options.validate) {
         const layoutResult = validateRuntimeLayout(appDir);

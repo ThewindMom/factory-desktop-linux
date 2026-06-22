@@ -621,20 +621,20 @@ function buildUpdaterExtraFiles(
   const packagingLinuxDir = path.join(projectRoot, "packaging", "linux");
 
   const extraFiles: Array<{ from: string; to: string }> = [
-    // Updater binary → /usr/bin/
-    { from: updaterBinary, to: "/usr/bin/factory-update-manager" },
+    // Updater binary → staged in app dir, postinst copies to /usr/bin/
+    { from: updaterBinary, to: ".factory-linux/updater/factory-update-manager" },
   ];
 
-  // Systemd user service unit
+  // Systemd user service unit — staged in app dir, postinst copies to system path
   const serviceFile = path.join(packagingLinuxDir, "factory-update-manager.service");
   if (fs.existsSync(serviceFile)) {
     extraFiles.push({
       from: serviceFile,
-      to: "/usr/lib/systemd/user/factory-update-manager.service",
+      to: ".factory-linux/updater/factory-update-manager.service",
     });
   }
 
-  // Polkit policy
+  // Polkit policy — staged in app dir, postinst copies to system path
   const polkitFile = path.join(
     packagingLinuxDir,
     "org.factory.desktop.update-manager.policy"
@@ -642,22 +642,21 @@ function buildUpdaterExtraFiles(
   if (fs.existsSync(polkitFile)) {
     extraFiles.push({
       from: polkitFile,
-      to: "/usr/share/polkit-1/actions/org.factory.desktop.update-manager.policy",
+      to: ".factory-linux/updater/org.factory.desktop.update-manager.policy",
     });
   }
 
-  // Stage the builder checkout to /opt/factory-desktop/update-builder/ so the
-  // updater can rebuild from new upstream DMGs without re-cloning. We stage the
-  // essential directories needed for a rebuild (dist/, node_modules/, src/,
-  // package.json, linux-features/, assets/).
+  // Stage the builder checkout so the updater can rebuild from new upstream
+  // DMGs without re-cloning. These go into .factory-linux/update-builder/
+  // within the app dir; postinst moves them to /opt/factory-desktop/update-builder/.
   const builderDirs = ["dist", "node_modules", "src", "linux-features", "assets"];
-  const updateBuilderRoot = "/opt/factory-desktop/update-builder";
+  const builderBase = ".factory-linux/update-builder";
   for (const dir of builderDirs) {
     const srcDir = path.join(projectRoot, dir);
     if (fs.existsSync(srcDir)) {
       extraFiles.push({
         from: srcDir,
-        to: path.posix.join(updateBuilderRoot, dir),
+        to: path.posix.join(builderBase, dir),
       });
     }
   }
@@ -667,7 +666,7 @@ function buildUpdaterExtraFiles(
     if (fs.existsSync(srcFile)) {
       extraFiles.push({
         from: srcFile,
-        to: path.posix.join(updateBuilderRoot, file),
+        to: path.posix.join(builderBase, file),
       });
     }
   }
@@ -745,10 +744,14 @@ export function createElectronBuilderConfig(options: PackageBuildOptions, projec
     },
     // extraFiles is a top-level Configuration property (not deb-specific).
     // Bundles the update manager binary, systemd unit, polkit policy, and
-    // updater source into the package.
-    ...(buildUpdaterExtraFiles(options, projectRoot) || {}),
-    // Hicolor theme icons — always included (independent of updater).
-    ...(buildHicolorIconExtraFiles(projectRoot) || {}),
+    // updater source into the package. Files are staged within the app dir
+    // (under .factory-linux/) because electron-builder's extraFiles 'to'
+    // paths are relative to the app's unpacked directory, not absolute
+    // filesystem paths. The postinst script copies them to system paths.
+    extraFiles: [
+      ...(buildUpdaterExtraFiles(options, projectRoot)?.extraFiles || []),
+      ...(buildHicolorIconExtraFiles(projectRoot)?.extraFiles || []),
+    ],
     appImage: {
       // AppImage-specific options
     },

@@ -18,6 +18,38 @@ if [ -f "$SANDBOX" ]; then
     chmod 4755 "$SANDBOX" 2>/dev/null || true
 fi
 
+# Install the update manager binary, service unit, and polkit policy
+# from the staged app dir to system paths.
+APP_DIR="/opt/Factory"
+UPDATER_STAGED="$APP_DIR/.factory-linux/updater"
+if [ -d "$UPDATER_STAGED" ]; then
+    # Updater binary
+    if [ -f "$UPDATER_STAGED/factory-update-manager" ]; then
+        cp "$UPDATER_STAGED/factory-update-manager" /usr/bin/factory-update-manager
+        chown root:root /usr/bin/factory-update-manager
+        chmod 755 /usr/bin/factory-update-manager
+    fi
+    # Systemd user service unit
+    if [ -f "$UPDATER_STAGED/factory-update-manager.service" ]; then
+        mkdir -p /usr/lib/systemd/user
+        cp "$UPDATER_STAGED/factory-update-manager.service" /usr/lib/systemd/user/factory-update-manager.service
+        chmod 644 /usr/lib/systemd/user/factory-update-manager.service
+    fi
+    # Polkit policy
+    if [ -f "$UPDATER_STAGED/org.factory.desktop.update-manager.policy" ]; then
+        mkdir -p /usr/share/polkit-1/actions
+        cp "$UPDATER_STAGED/org.factory.desktop.update-manager.policy" /usr/share/polkit-1/actions/
+        chmod 644 /usr/share/polkit-1/actions/org.factory.desktop.update-manager.policy
+    fi
+fi
+
+# Install the builder checkout for local rebuilds
+BUILDER_STAGED="$APP_DIR/.factory-linux/update-builder"
+if [ -d "$BUILDER_STAGED" ]; then
+    mkdir -p /opt/factory-desktop
+    cp -r "$BUILDER_STAGED" /opt/factory-desktop/update-builder
+fi
+
 # Refresh icon cache so GNOME/taskbar picks up the installed hicolor icons.
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -f /usr/share/icons/hicolor/ >/dev/null 2>&1 || true
