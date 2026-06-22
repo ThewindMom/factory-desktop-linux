@@ -5,7 +5,7 @@ The official Factory Desktop app is available for macOS and Windows; this reposi
 covers Linux by converting the upstream macOS `Factory.dmg` into a runnable Linux
 Electron app.
 
-The project builds native `.deb` packages, supports local AppImage self-builds,
+The project builds native `.deb` and `.rpm` packages, supports local AppImage
 and can install a local update manager that rebuilds future Linux packages from
 newer upstream DMGs.
 
@@ -27,10 +27,28 @@ sudo apt-get install -f -y
 Or build from source:
 
 ```bash
-git clone https://github.com/ThewindMom/factory-desktop-linux.git
-cd factory-desktop-linux
+git clone https://github.com/ThewindMom/factory-droid-desktop-linux-port.git
+cd factory-droid-desktop-linux-port
 make build-app
 make deb
+make install
+```
+
+### Fedora, RHEL, openSUSE
+
+Download the latest `.rpm` from [Releases](../../releases), then:
+
+```bash
+sudo rpm -i factory-desktop-*.x86_64.rpm
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/ThewindMom/factory-droid-desktop-linux-port.git
+cd factory-droid-desktop-linux-port
+make build-app
+make rpm
 make install
 ```
 
@@ -102,7 +120,7 @@ Factory endpoint ──► fetch official DMG ──► extract app.asar + paylo
                               resolve Linux droid binary
                                         │                      │
                                         └──────────┬───────────┘
-                                     electron-builder → .deb / AppImage
+                                     electron-builder → .deb / .rpm / AppImage
 ```
 
 ### 1. Fetch the official DMG
@@ -252,10 +270,11 @@ polkit policy, and the bundled update builder.
 
 ## GitHub Releases
 
-A GitHub Actions workflow (`.github/workflows/release.yml`) rebuilds the `.deb`
-on every push to `master` (when `src/`, `packaging/`, `patches/`, `updater/`,
-or workflow files change), and also runs a daily cron check for new upstream
-versions.
+A GitHub Actions workflow (`.github/workflows/release.yml`) rebuilds native
+packages on every push to `master` (when `src/`, `packaging/`, `patches/`,
+`updater/`, `Makefile`, `package.json`, `package-lock.json`, `tsconfig.json`,
+or the workflow file itself change), and also runs a daily cron check for new
+upstream versions.
 
 The workflow:
 
@@ -263,8 +282,8 @@ The workflow:
 2. Fetches the upstream DMG
 3. Applies all registered asar patches
 4. Assembles the Linux Electron app
-5. Packages a `.deb` with the updater bundled
-6. Creates or updates a GitHub release with the `.deb` attached
+5. Packages `.deb` and `.rpm` with the updater bundled
+6. Creates or updates a GitHub release with both packages attached
 7. Moves the release tag to the current commit
 
 Release notes include the build SHA, commit log since the previous release,
