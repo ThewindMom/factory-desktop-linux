@@ -31,6 +31,12 @@ import { resolveFetchedDmg } from "./_helpers/fetched-dmg";
 const X64_DMG = resolveFetchedDmg("x64");
 const x64DmgAvailable = fs.existsSync(X64_DMG);
 
+// Derive the expected version from the DMG filename at runtime so tests
+// don't break when a new DMG version is fetched into work/.
+const DMG_VERSION = X64_DMG
+  ? path.basename(X64_DMG).match(/Factory-(\d+\.\d+\.\d+)/)?.[1] ?? ""
+  : "";
+
 // Path where app.asar would be extracted
 let extractedAsarPath: string | undefined;
 
@@ -268,7 +274,7 @@ describeIfAsar("readAsarPackageMetadata (integration)", () => {
     expect(result.success).toBe(true);
     expect(result.packageMetadata).toBeDefined();
     expect(result.packageMetadata!.productName).toBe("Factory");
-    expect(result.packageMetadata!.version).toBe("0.106.0");
+    expect(result.packageMetadata!.version).toBe(DMG_VERSION);
     expect(result.packageMetadata!.main).toBe(".vite/build/main.js");
     expect(result.packageMetadata!.name).toBe("desktop");
   });

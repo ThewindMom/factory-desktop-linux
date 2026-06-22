@@ -19,6 +19,13 @@ import { resolveFetchedDmg } from "./_helpers/fetched-dmg";
 const X64_DMG = resolveFetchedDmg("x64");
 const ARM64_DMG = resolveFetchedDmg("arm64");
 
+// Derive the expected version from the DMG filename at runtime so tests
+// don't break when a new DMG version is fetched into work/. Matches the
+// same /Factory-(\d+\.\d+\.\d+)/ pattern used by validateDmg().
+const DMG_VERSION = X64_DMG
+  ? path.basename(X64_DMG).match(/Factory-(\d+\.\d+\.\d+)/)?.[1] ?? ""
+  : "";
+
 // Whether reference DMGs are available for testing
 const x64DmgAvailable = fs.existsSync(X64_DMG);
 const arm64DmgAvailable = fs.existsSync(ARM64_DMG);
@@ -90,7 +97,7 @@ describe("validateDmg", () => {
     it("accepts valid x64 DMG and reports version", () => {
       const result = validateDmg(X64_DMG);
       expect(result.valid).toBe(true);
-      expect(result.version).toBe("0.106.0");
+      expect(result.version).toBe(DMG_VERSION);
     });
 
     it("reports version extracted from filename", () => {
@@ -123,7 +130,7 @@ describe("CLI validate command", () => {
         { encoding: "utf-8", timeout: 30000 }
       );
       expect(output).toContain("Valid Factory Desktop DMG");
-      expect(output).toContain("0.106.0");
+      expect(output).toContain(DMG_VERSION);
     });
   });
 

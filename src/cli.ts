@@ -334,8 +334,10 @@ program
       // Ensure generated directories exist
       ensureGeneratedDirs(dirs);
 
-      // Track the extraction workspace
-      tracker.track(workDir, "Extraction workspace");
+      // Track the extraction output directory (not work/ itself, which
+      // contains the user's input DMG and must not be deleted on failure).
+      const extractDir = path.join(workDir, "extracted");
+      tracker.track(extractDir, "Extraction workspace");
 
       process.stdout.write(
         `\nExtraction workspace: ${workDir}\n` +
@@ -369,12 +371,16 @@ program
       // Extract DMG payload with metadata validation
       process.stdout.write(`\nExtracting DMG payload...\n`);
 
-      const extractDir = path.join(workDir, "extracted");
       const extractResult = extractDmgPayload(options.dmg, extractDir, {
         selectedVersion,
         versionOverride: options.versionOverride || false,
         extractIcons: true,
       });
+
+      // Mark the extraction directory as created now that extraction has run.
+      // This ensures cleanupOnFailure() removes partial extraction outputs
+      // if a later step fails, without deleting work/ (which holds the DMG).
+      tracker.markCreated(extractDir);
 
       if (!extractResult.success) {
         process.stderr.write(
@@ -2717,7 +2723,7 @@ program
 
     try {
       ensureGeneratedDirs(dirs);
-      tracker.track(dirs.work, "Extraction workspace");
+      tracker.track(path.join(dirs.work, "extracted"), "Extraction workspace");
       tracker.track(dirs.build, "Assembled Linux app");
       tracker.track(dirs.dist, "Package artifacts");
       tracker.track(dirs.out, "Packaging output");
@@ -2773,6 +2779,8 @@ program
         versionOverride: options.versionOverride || false,
         extractIcons: true,
       });
+
+      tracker.markCreated(extractDir);
 
       if (!extractResult.success) {
         process.stderr.write(`Extraction failed: ${extractResult.error}\n`);

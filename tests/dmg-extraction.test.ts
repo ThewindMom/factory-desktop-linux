@@ -29,6 +29,13 @@ const x64DmgAvailable = fs.existsSync(X64_DMG);
 
 const describeIfDmg = x64DmgAvailable ? describe : describe.skip;
 
+// Derive the expected version from the DMG filename at runtime so tests
+// don't break when a new DMG version is fetched into work/. Matches the
+// same /Factory-(\d+\.\d+\.\d+)/ pattern used by validateDmg().
+const DMG_VERSION = X64_DMG
+  ? path.basename(X64_DMG).match(/Factory-(\d+\.\d+\.\d+)/)?.[1] ?? ""
+  : "";
+
 // ============== Unit tests for plist parsing ==============
 
 describe("parseFactoryVersionFromPlist", () => {
@@ -270,11 +277,11 @@ describeIfDmg("extractDmgPayload (integration)", () => {
   it("extracts app.asar and validates metadata", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload(X64_DMG, extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
     });
 
     expect(result.success).toBe(true);
-    expect(result.dmgVersion).toBe("0.106.0");
+    expect(result.dmgVersion).toBe(DMG_VERSION);
     expect(result.asarPath).toBeDefined();
     expect(fs.existsSync(result.asarPath!)).toBe(true);
   });
@@ -282,20 +289,20 @@ describeIfDmg("extractDmgPayload (integration)", () => {
   it("reports ASAR package metadata", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload(X64_DMG, extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
     });
 
     expect(result.success).toBe(true);
     expect(result.packageMetadata).toBeDefined();
     expect(result.packageMetadata!.productName).toBe("Factory");
-    expect(result.packageMetadata!.version).toBe("0.106.0");
+    expect(result.packageMetadata!.version).toBe(DMG_VERSION);
     expect(result.packageMetadata!.main).toBe(".vite/build/main.js");
   });
 
   it("reports Electron version", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload(X64_DMG, extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
     });
 
     expect(result.success).toBe(true);
@@ -305,7 +312,7 @@ describeIfDmg("extractDmgPayload (integration)", () => {
   it("computes ASAR SHA-256 hash", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload(X64_DMG, extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
     });
 
     expect(result.success).toBe(true);
@@ -315,7 +322,7 @@ describeIfDmg("extractDmgPayload (integration)", () => {
   it("computes file hashes for all extracted files", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload(X64_DMG, extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
     });
 
     expect(result.success).toBe(true);
@@ -354,7 +361,7 @@ describeIfDmg("extractDmgPayload (integration)", () => {
   it("fails for nonexistent DMG path", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload("/nonexistent.dmg", extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
     });
 
     expect(result.success).toBe(false);
@@ -364,7 +371,7 @@ describeIfDmg("extractDmgPayload (integration)", () => {
   it("returns empty warnings for successful extraction with all optional paths", () => {
     const extractDir = path.join(workDir, "extracted");
     const result = extractDmgPayload(X64_DMG, extractDir, {
-      selectedVersion: "0.106.0",
+      selectedVersion: DMG_VERSION,
       extractIcons: true,
     });
 
@@ -392,7 +399,7 @@ describeIfDmg("verifyDeterministicExtraction (integration)", () => {
     const result = verifyDeterministicExtraction(
       X64_DMG,
       workDir,
-      "0.106.0"
+      DMG_VERSION
     );
 
     expect(result.deterministic).toBe(true);
@@ -403,7 +410,7 @@ describeIfDmg("verifyDeterministicExtraction (integration)", () => {
     const result = verifyDeterministicExtraction(
       X64_DMG,
       workDir,
-      "0.106.0"
+      DMG_VERSION
     );
 
     expect(result.run1Hashes).toBeDefined();
@@ -422,7 +429,7 @@ describeIfDmg("verifyDeterministicExtraction (integration)", () => {
     const result = verifyDeterministicExtraction(
       X64_DMG,
       workDir,
-      "0.106.0"
+      DMG_VERSION
     );
 
     expect(result.run1Metadata).toBeDefined();
@@ -441,11 +448,11 @@ describeIfDmg("verifyDeterministicExtraction (integration)", () => {
     const result = verifyDeterministicExtraction(
       X64_DMG,
       workDir,
-      "0.106.0"
+      DMG_VERSION
     );
 
     expect(result.run1Version).toBe(result.run2Version);
-    expect(result.run1Version).toBe("0.106.0");
+    expect(result.run1Version).toBe(DMG_VERSION);
   });
 });
 
@@ -459,7 +466,7 @@ describeIfDmg("CLI extract command (integration)", () => {
       `npx ts-node "${cliPath}" extract --dmg "${X64_DMG}"`,
       { encoding: "utf-8", timeout: 120000 }
     );
-    expect(output).toContain("0.106.0");
+    expect(output).toContain(DMG_VERSION);
     expect(output).toContain("Factory");
   });
 
