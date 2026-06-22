@@ -279,40 +279,6 @@ async function fetchNpmVersions(): Promise<string[]> {
   });
 }
 
-/**
- * Find the closest available CLI version for a requested Desktop version.
- * The Desktop version and CLI version don't always match (e.g. Desktop 0.110.0
- * has no CLI 0.110.0 on npm — the CLI jumps from 0.109.3 to 0.111.0).
- *
- * Strategy: prefer exact match, then nearest version by numeric distance.
- */
-export function findClosestVersion(
-  requested: string,
-  available: string[]
-): { version: string; match: "exact" | "fallback" } {
-  if (available.includes(requested)) {
-    return { version: requested, match: "exact" };
-  }
-
-  const reqParts = requested.split(".").map(Number);
-  const reqNum = reqParts[0] * 10000 + reqParts[1] * 100 + reqParts[2];
-
-  let best: string | undefined;
-  let bestDiff = Infinity;
-
-  for (const v of available) {
-    const parts = v.split(".").map(Number);
-    if (parts.length < 3 || parts.some(isNaN)) continue;
-    const vNum = parts[0] * 10000 + parts[1] * 100 + parts[2];
-    const diff = Math.abs(vNum - reqNum);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = v;
-    }
-  }
-
-  return { version: best || available[0], match: "fallback" };
-}
 
 /**
  * Download and extract the droid binary from the npm tarball.
