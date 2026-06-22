@@ -125,7 +125,7 @@ describe("patchDaemonTransport", () => {
       expect(result.hasListenIpcGuard).toBe(true);
     });
 
-    it("droid daemon does not support --listen flag", () => {
+    it("droid daemon supports --listen flag (latest droid)", () => {
       if (!fs.existsSync(droidPath)) return;
 
       const result = validateDaemonTransport({
@@ -133,13 +133,16 @@ describe("patchDaemonTransport", () => {
         droidPath: droidPath,
       });
 
-      expect(result.listenFlagSupported).toBe(false);
+      // The latest droid CLI supports --listen with choices websocket/ipc.
+      // The transport patch still forces WebSocket as defense-in-depth,
+      // but --listen is no longer an unsupported flag.
+      expect(result.listenFlagSupported).toBe(true);
       expect(result.supportedDaemonFlags).toBeDefined();
       if (result.supportedDaemonFlags) {
         expect(result.supportedDaemonFlags).toContain("--host");
         expect(result.supportedDaemonFlags).toContain("--port");
         expect(result.supportedDaemonFlags).toContain("--unix");
-        expect(result.supportedDaemonFlags).not.toContain("--listen");
+        expect(result.supportedDaemonFlags).toContain("--listen");
       }
     });
   });

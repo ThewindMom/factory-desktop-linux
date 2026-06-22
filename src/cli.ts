@@ -3872,8 +3872,8 @@ program
 
     if (!result.valid) {
       process.stderr.write(
-        `\n✗ Daemon transport validation FAILED. The app may emit unsupported ` +
-        `\`--listen ipc\` for the Linux droid daemon.\n`
+        `\n✗ Daemon transport validation FAILED. The app may emit ` +
+        `\`--listen ipc\` which is unreliable on Linux.\n`
       );
       process.exit(1);
     }

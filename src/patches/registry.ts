@@ -110,14 +110,15 @@ interface GenericPatchResult {
 
 /**
  * The daemon transport patch forces WebSocket transport on Linux so the app
- * never emits `droid daemon --listen ipc` (unsupported by the Linux droid).
+ * never emits `droid daemon --listen ipc`. While the latest droid CLI supports
+ * `--listen` with choices websocket/ipc, IPC transport is unreliable on Linux.
  * Registered first because it gates daemon reachability.
  */
 const daemonTransportPatch: Patch = {
   id: "daemon-transport",
   description:
     "Force WebSocket daemon transport on Linux and guard against " +
-    "`--listen ipc` (unsupported by the Linux droid CLI).",
+    "`--listen ipc` (IPC transport is unreliable on Linux).",
   apply: (options) =>
     patchDaemonTransport({
       asarPath: options.asarPath,
@@ -125,7 +126,6 @@ const daemonTransportPatch: Patch = {
       tolerateMissingTarget: options.tolerateMissingTarget,
     }),
 };
-
 /**
  * The auto-updater patch guards Electron's built-in `autoUpdater` calls on
  * Linux so the app doesn't try to check for or install macOS/Windows updates.

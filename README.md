@@ -135,8 +135,10 @@ hardcoded minified strings — so they survive upstream version bumps.
 The registry currently ships three core patches:
 
 - **`daemon-transport`** — forces WebSocket daemon transport on Linux and guards
-  against `droid daemon --listen ipc` (unsupported by the Linux `droid` CLI).
-  Without this, the daemon crashes on launch with `error: unknown option '--listen'`.
+  against `droid daemon --listen ipc`. While the latest droid CLI supports
+  `--listen` with choices `websocket`/`ipc`, IPC transport is unreliable on
+  Linux due to missing IPC channel setup. The patch forces WebSocket as
+  defense-in-depth.
 
 - **`auto-updater`** — guards `autoUpdater.checkForUpdates()` and
   `autoUpdater.quitAndInstall()` with `process.platform!=="linux"`. Factory
@@ -349,9 +351,8 @@ make test            # cargo test
 
 | Problem | First thing to try |
 |---|---|
-| Daemon won't start | Check `~/.factory/logs/daemon-stderr.log` for `unknown option '--listen'` — means the transport patch isn't applied |
 | No window controls | The window-controls patch isn't applied — rebuild from latest source |
-| Updater seems stuck | Run `factory-update-manager status --json` and check service logs |
+| Daemon won't start | Check `~/.factory/logs/daemon-stderr.log` for transport errors — means the daemon-transport patch isn't applied |
 | `make build-app` fails | Run `node dist/cli.js check-tools` to verify all dependencies are installed |
 | Custom Models page empty | The bundled droid is too old — rebuild from latest source to get the latest droid from npm |
 

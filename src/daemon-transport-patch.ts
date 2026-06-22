@@ -4,8 +4,10 @@
  * Problem: Factory Desktop's app.asar contains a daemon transport selection
  * function that can select IPC transport based on a Statsig feature flag
  * (`DesktopDaemonIpc`). When IPC is selected, the app emits
- * `droid daemon --listen ipc`. The Linux droid CLI does NOT support
- * `--listen`; it only supports `--host`, `--port`, and `--unix`.
+ * `droid daemon --listen ipc`. Older Linux droid CLIs did not support
+ * `--listen` at all; the latest droid CLI supports it with choices
+ * `websocket`/`ipc` (default: `websocket`), but IPC transport is still
+ * unreliable on Linux (no proper IPC channel setup).
  *
  * Fix: Patch the app.asar to force WebSocket transport on Linux by:
  * 1. Modifying the transport selection function to return WebSocket on Linux
@@ -463,8 +465,8 @@ export function validateDaemonTransport(
 
       if (listenFlagSupported) {
         warnings.push(
-          "The bundled droid daemon supports --listen. " +
-            "The transport patch may not be needed for this droid version. " +
+          "The bundled droid daemon supports --listen (choices: websocket/ipc). " +
+            "The transport patch still forces WebSocket as defense-in-depth. " +
             `Supported flags: ${supportedDaemonFlags.join(", ")}`,
         );
       }
@@ -502,8 +504,8 @@ export function validateDaemonTransport(
         } else if (!funcText.includes("process.platform")) {
           errors.push(
             "Transport resolver can still select IPC transport on Linux. " +
-              "The daemon may emit `--listen ipc` which is not supported " +
-              "by the Linux droid CLI.",
+              "The daemon may emit `--listen ipc` which is unreliable " +
+              "on Linux (IPC channel setup issues).",
           );
         }
       } else {
@@ -542,7 +544,7 @@ export function validateDaemonTransport(
       } else {
         errors.push(
           "The daemon args construction can still push `--listen ipc` on Linux. " +
-            "This is unsupported by the Linux droid CLI.",
+            "IPC transport is unreliable on Linux (no proper IPC channel setup).",
         );
       }
     } else if (content.includes("--listen")) {
