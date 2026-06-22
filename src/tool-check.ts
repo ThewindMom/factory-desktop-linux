@@ -23,8 +23,9 @@ export interface RequiredTool {
 export const REQUIRED_TOOLS: RequiredTool[] = [
   {
     name: "7z",
-    description: "7-Zip for DMG extraction",
+    description: "7-Zip for DMG extraction (>=21 required for LZFSE DMG support)",
     versionArg: "--help",
+    minVersion: "21",
     required: true,
   },
   {
@@ -82,7 +83,23 @@ export interface ToolCheckResult {
 }
 
 /**
+ * Parse the major version number from a tool's version output.
+ * Handles formats like "7-Zip [64] 16.02", "7-Zip (z) 26.01", "v22.0.0".
+ */
+export function parseMajorVersion(versionLine: string): number | undefined {
+  // Match the first "N." sequence in the output — this is always the
+  // version major regardless of prefix. Handles:
+  //   "7-Zip [64] 16.02 ..." -> 16
+  //   "7-Zip (z) 26.01 ..."  -> 26
+  //   "v22.0.0"              -> 22
+  const match = versionLine.match(/(\d+)\./);
+  return match ? parseInt(match[1], 10) : undefined;
+}
+
+/**
  * Check whether a single tool is available on the system.
+ * If minVersion is set, the tool is reported as unavailable when the
+ * detected major version is below the threshold.
  */
 export function checkTool(tool: RequiredTool): ToolCheckResult {
   try {
@@ -97,6 +114,24 @@ export function checkTool(tool: RequiredTool): ToolCheckResult {
 
     // Extract version from first line
     const versionLine = output.trim().split("\n")[0];
+
+    // Enforce minimum version if specified
+    if (tool.minVersion) {
+      const detected = parseMajorVersion(versionLine);
+      const required = parseInt(tool.minVersion, 10);
+      if (detected !== undefined && detected < required) {
+        return {
+          tool: tool.name,
+          available: false,
+          version: versionLine,
+          error:
+            `7-Zip ${detected}.xx is too old: LZFSE-compressed DMGs require ` +
+            `7-Zip >=${tool.minVersion}. Detected: "${versionLine}". ` +
+            `Install from https://www.7-zip.org/download.html ` +
+            `(Ubuntu's p7zip-full 16.02 is insufficient).`,
+        };
+      }
+    }
 
     return {
       tool: tool.name,
@@ -141,11 +176,18 @@ export function checkAllTools(): {
  * Throws with actionable diagnostics if any are missing.
  */
 export function assertRequiredTools(): void {
-  const { missingRequired } = checkAllTools();
+  const { results, missingRequired } = checkAllTools();
   if (missingRequired.length > 0) {
+    // Include version errors for tools that are present but too old
+    const versionErrors = results
+      .filter((r) => !r.available && r.version && r.error)
+      .map((r) => `  ${r.tool}: ${r.error}`);
+    const detail = versionErrors.length > 0
+      ? "\n" + versionErrors.join("\n")
+      : "";
     throw new Error(
       `Missing required tools: ${missingRequired.join(", ")}. ` +
-        `Please install them before running the builder.`
+        `Please install them before running the builder.${detail}`
     );
   }
 }

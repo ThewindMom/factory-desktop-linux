@@ -85,11 +85,20 @@ export function validateDmg(dmgPath: string): DmgValidationResult {
     };
   }
 
-  // Factory Desktop DMGs contain "Factory.app" in their listing
+  // Factory Desktop DMGs contain "Factory.app" in their listing.
+  // If 7z is too old (e.g. p7zip 16.02), it cannot decompress LZFSE-compressed
+  // DMGs and will only list partition-level entries (e.g. "4.hfs") without
+  // descending into the HFS+ filesystem — so "Factory.app" never appears.
   if (!listing.includes("Factory.app")) {
+    const hasHfsPartition = listing.includes(".hfs");
+    const lzfseHint = hasHfsPartition
+      ? " 7z listed HFS partitions but no app contents — this usually means " +
+        "7z is too old to decompress LZFSE (need 7-Zip >=21, not p7zip 16.02). " +
+        "Install from https://www.7-zip.org/download.html"
+      : "";
     return {
       valid: false,
-      error: `DMG does not appear to be a Factory Desktop DMG (no Factory.app found in archive): ${dmgPath}`,
+      error: `DMG does not appear to be a Factory Desktop DMG (no Factory.app found in archive): ${dmgPath}.${lzfseHint}`,
     };
   }
 
