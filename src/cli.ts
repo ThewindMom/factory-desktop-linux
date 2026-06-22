@@ -11,6 +11,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { execSync } from "child_process";
 import { Command } from "commander";
 import {
   resolveReleaseMode,
@@ -2939,7 +2940,7 @@ program
         // Builder checkout for local rebuilds
         const builderStagingDir = path.join(factoryLinuxDir, "update-builder");
         fs.mkdirSync(builderStagingDir, { recursive: true });
-        for (const dir of ["dist", "node_modules", "src", "linux-features", "assets"]) {
+        for (const dir of ["dist", "node_modules", "src", "assets"]) {
           const srcDir = path.join(projectRoot, dir);
           if (fs.existsSync(srcDir)) {
             fs.cpSync(srcDir, path.join(builderStagingDir, dir), { recursive: true });
@@ -2951,8 +2952,24 @@ program
             fs.copyFileSync(srcFile, path.join(builderStagingDir, file));
           }
         }
-
-        process.stdout.write(`✓ Updater files staged in app directory\n`);
+        // Prune devDependencies from the staged node_modules to reduce
+        // the .deb size. The builder only needs runtime deps (electron,
+        // electron-builder, @electron/asar, etc.) for local rebuilds —
+        // not typescript, jest, eslint, etc.
+        const stagedNodeModules = path.join(builderStagingDir, "node_modules");
+        if (fs.existsSync(stagedNodeModules) && fs.existsSync(path.join(builderStagingDir, "package.json"))) {
+          try {
+            execSync("npm install --omit=dev", {
+              cwd: builderStagingDir,
+              stdio: "pipe",
+              timeout: 120000,
+            });
+            process.stdout.write(`✓ Pruned devDependencies from staged builder bundle\n`);
+          } catch {
+            // Non-fatal — the full node_modules will still work, just larger
+            process.stdout.write(`⚠ Could not prune devDependencies (non-fatal)\n`);
+          }
+        }
       }
 
       // Validate if requested

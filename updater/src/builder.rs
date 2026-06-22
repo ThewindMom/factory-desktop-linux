@@ -21,16 +21,14 @@ use tokio::process::Command;
 use tracing::info;
 
 /// Files/dirs from the builder checkout needed for a local rebuild.
-/// `dist/cli.js` is the compiled entrypoint; `package.json` + `node_modules/`
-/// are needed for runtime deps. `linux-features/` and `src/patches/` provide
-/// the patch registry and feature boundary.
+/// `dist/cli.js` is the compiled entrypoint; `package.json` + `node_modules`
+/// are needed for runtime deps. `src/patches/` provides the patch registry.
 const REQUIRED_BUNDLE_ENTRIES: &[&str] = &[
     "dist",
     "package.json",
     "package-lock.json",
     "node_modules",
     "src/patches",
-    "linux-features",
     "packaging",
 ];
 

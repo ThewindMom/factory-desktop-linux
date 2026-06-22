@@ -44,24 +44,6 @@ make appimage
 AppImage builds and repo-only generated apps do not include the native-package
 updater.
 
-### From source (Nix flake)
-
-A `flake.nix` is included for NixOS and Nix users. It builds the package
-from the published `.deb` using `autoPatchelfHook`:
-
-```bash
-# Build the package
-nix build .#factory-desktop
-
-# Enter a development shell with all build tools
-nix develop
-
-# Install on NixOS (adds the NixOS module)
-nix profile install .#factory-desktop
-```
-
-The flake fetches the `.deb` from GitHub Releases. Update the `sha256`
-in `flake.nix` when the version changes (use `nix-prefetch-url`).
 
 ## Make Targets
 
@@ -104,7 +86,6 @@ Variables:
 | Auto-update manager | Native packages | Included unless `PACKAGE_WITH_UPDATER=0` | [Updater](#auto-update-manager) |
 | AppImage self-build | Manual | `make build-app && make appimage` | This README |
 | GitHub Releases CI | Automatic | Pushes + daily cron check for new upstream versions | [CI](#github-releases) |
-| Linux Features framework | Opt-in | Edit `linux-features/features.json` | [Linux Features](linux-features/README.md) |
 
 ## How It Works
 
@@ -118,10 +99,9 @@ Factory endpoint ──► fetch official DMG ──► extract app.asar + paylo
                               asar patch registry ──► assemble Linux Electron app
                                         │                      │
                                         ▼                      ▼
-                    optional linux-features/      resolve Linux droid binary
+                              resolve Linux droid binary
                                         │                      │
                                         └──────────┬───────────┘
-                                                   ▼
                                      electron-builder → .deb / AppImage
 ```
 
@@ -185,15 +165,7 @@ uses the **latest version from npm** to ensure all daemon JSON-RPC methods are
 supported (older versions like 0.109.3 lack `daemon.list_custom_models`, which
 breaks the Custom Models settings page).
 
-### 4. Optional linux-features
-
-Optional, distro/workflow-specific integrations live in
-[`linux-features/<id>/`](linux-features/) as self-contained directories with a
-`feature.json` manifest, **disabled by default**. The loader
-([`src/features/loader.ts`](src/features/loader.ts)) discovers only enabled
-features at build time.
-
-### 5. Assemble + package
+### 4. Assemble + package
 
 The runtime assembly
 ([`src/runtime-assembly.ts`](src/runtime-assembly.ts)) stages a Linux Electron
@@ -337,8 +309,6 @@ Supported first-class targets:
 - RPM package (`.rpm`) — for Fedora/RHEL/openSUSE
 - AppImage — local self-build
 
-Pacman (Arch Linux) is supported via a `PKGBUILD` template at
-`packaging/linux/PKGBUILD.template`, which wraps the `.deb` extraction.
 `make package` auto-detects the distro and builds the appropriate format;
 `make rpm` builds RPM directly.
 

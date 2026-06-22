@@ -6,11 +6,9 @@
  * apply(), and an isolated result. Patches are discoverable, individually
  * testable, and fail loudly when their needle is missing.
  *
- * Design rule (ported from the reference):
+ * Design rule:
  * - Required for the app to launch/behave correctly on Linux for most users
  *   -> register here as a core patch.
- * - Optional / distro / workflow specific -> linux-features/<id>/ descriptor,
- *   disabled by default.
  *
  * The registry delegates to the existing tested patch implementations; new
  * patches are added by registering a {@link Patch} without touching the

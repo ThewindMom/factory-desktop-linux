@@ -14,7 +14,7 @@ use futures_util::StreamExt;
 use reqwest::{header, Client};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use tokio::{fs::File, io::AsyncWriteExt};
+use tokio::{fs::File, io::AsyncWriteExt, time::timeout};
 
 /// Parses the Factory Desktop version from a presigned S3 redirect URL.
 ///
@@ -147,7 +147,25 @@ pub async fn download_dmg(
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
+    // Per-chunk timeout: if no data arrives within 60 seconds, abort.
+    // This prevents the download from hanging indefinitely if the S3
+    // connection stalls mid-stream.
+    const CHUNK_TIMEOUT_SECS: u64 = 60;
+
+    loop {
+        let chunk = match timeout(
+            std::time::Duration::from_secs(CHUNK_TIMEOUT_SECS),
+            stream.next(),
+        )
+        .await
+        {
+            Ok(Some(result)) => result,
+            Ok(None) => break,
+            Err(_) => {
+                anyhow::bail!("DMG download stalled: no data for {CHUNK_TIMEOUT_SECS}s");
+            }
+        };
+
         let chunk = chunk.with_context(|| format!("Failed downloading {dmg_api_url}"))?;
         file.write_all(&chunk)
             .await

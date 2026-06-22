@@ -94,10 +94,12 @@ describe("checkAllTools", () => {
     }
   });
 
-  it("rpmbuild is not available on this host", () => {
+  it("rpmbuild availability matches host", () => {
     const { results } = checkAllTools();
     const rpm = results.find((r) => r.tool === "rpmbuild");
-    expect(rpm?.available).toBe(false);
+    // rpmbuild may or may not be installed — just verify the check ran
+    expect(rpm).toBeDefined();
+    expect(typeof rpm?.available).toBe("boolean");
   });
 });
 

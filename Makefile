@@ -16,15 +16,13 @@ UPDATER_BIN := $(CURDIR)/updater/target/release/factory-update-manager
 # Auto-detect native package format from /etc/os-release
 NATIVE_PKG_FORMAT_CMD = format=""; \
 if [ -r /etc/os-release ]; then . /etc/os-release; \
-	if echo "$${ID:-} $${ID_LIKE:-}" | grep -qw arch; then format="pacman"; \
-	elif echo "$${ID:-} $${ID_LIKE:-}" | grep -qwE 'fedora|rhel|centos|rocky|almalinux|opensuse|suse'; then format="rpm"; \
+	if echo "$${ID:-} $${ID_LIKE:-}" | grep -qwE 'fedora|rhel|centos|rocky|almalinux|opensuse|suse'; then format="rpm"; \
 	elif echo "$${ID:-} $${ID_LIKE:-}" | grep -qwE 'debian|ubuntu|linuxmint|pop|elementary|zorin'; then format="deb"; \
 	fi; \
 fi; \
 if [ -z "$$format" ]; then \
 	if command -v dpkg-deb >/dev/null 2>&1; then format="deb"; \
 	elif command -v rpmbuild >/dev/null 2>&1; then format="rpm"; \
-	elif command -v pacman >/dev/null 2>&1; then format="pacman"; \
 	fi; \
 fi; \
 printf '%s\n' "$$format"
@@ -98,7 +96,7 @@ package: maybe-build-updater
 	@echo "[make] Building native package (auto-detecting distro)"
 	@format="$$( $(NATIVE_PKG_FORMAT_CMD) )"; \
 	if [ "$$format" = "pacman" ]; then \
-		echo "[make] pacman is not yet supported by electron-builder. Falling back to deb." >&2; \
+		echo "[make] pacman is not supported. Falling back to deb." >&2; \
 		format="deb"; \
 	fi; \
 	if [ -z "$$format" ]; then \
@@ -126,11 +124,6 @@ install:
 		[ -n "$$rpm" ] || { echo "[make] No .rpm found. Run 'make rpm' first." >&2; exit 1; }; \
 		echo "[make] Installing $$rpm"; \
 		sudo rpm -Uvh "$$rpm"; \
-	elif [ "$$format" = "pacman" ]; then \
-		echo "[make] pacman install: use the PKGBUILD template in packaging/linux/" >&2; \
-		echo "[make]   cp packaging/linux/PKGBUILD.template /tmp/PKGBUILD" >&2; \
-		echo "[make]   (edit version + sha256, then: cd /tmp && makepkg -si)" >&2; \
-		exit 1; \
 	else \
 		echo "[make] Unsupported format: $$format" >&2; exit 1; \
 	fi

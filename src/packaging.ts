@@ -560,7 +560,7 @@ function buildUpdaterExtraFiles(
   // Stage the builder checkout so the updater can rebuild from new upstream
   // DMGs without re-cloning. These go into .factory-linux/update-builder/
   // within the app dir; postinst moves them to /opt/factory-desktop/update-builder/.
-  const builderDirs = ["dist", "node_modules", "src", "linux-features", "assets"];
+  const builderDirs = ["dist", "node_modules", "src", "assets"];
   const builderBase = ".factory-linux/update-builder";
   for (const dir of builderDirs) {
     const srcDir = path.join(projectRoot, dir);
