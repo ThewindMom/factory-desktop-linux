@@ -867,6 +867,12 @@ fn complete_pending_install_if_already_installed(
         return Ok(false);
     };
 
+    // Don't clear a pending port update if the port SHA differs — the
+    // version matches but the port build has new patches/code.
+    if state.port_candidate_sha.is_some() && state.port_candidate_sha != state.installed_port_sha {
+        return Ok(false);
+    }
+
     let candidate_is_installed =
         installed_version_matches_candidate(&state.installed_version, &candidate_version);
 
@@ -892,21 +898,28 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
     if let Some(candidate_version) = state.candidate_version.clone().filter(|candidate| {
         installed_version_satisfies_candidate(&state.installed_version, candidate)
     }) {
-        let candidate_is_installed =
-            installed_version_matches_candidate(&state.installed_version, &candidate_version);
+        // Don't clear an interrupted port update if the port SHA differs.
+        if state.port_candidate_sha.is_some()
+            && state.port_candidate_sha != state.installed_port_sha
+        {
+            // Fall through to package recovery below.
+        } else {
+            let candidate_is_installed =
+                installed_version_matches_candidate(&state.installed_version, &candidate_version);
 
-        state.status = UpdateStatus::Installed;
-        state.waiting_for_app_exit_auto_install = false;
-        state.candidate_version = None;
-        if !candidate_is_installed {
-            state.artifact_paths.package_path = None;
+            state.status = UpdateStatus::Installed;
+            state.waiting_for_app_exit_auto_install = false;
+            state.candidate_version = None;
+            if !candidate_is_installed {
+                state.artifact_paths.package_path = None;
+            }
+            state.error_message = None;
+            state.notified_events.clear();
+            cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
+            persist_state(paths, state)?;
+            info!("recovered interrupted install state because the candidate version is already installed");
+            return Ok(());
         }
-        state.error_message = None;
-        state.notified_events.clear();
-        cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
-        persist_state(paths, state)?;
-        info!("recovered interrupted install state because the candidate version is already installed");
-        return Ok(());
     }
 
     let Some(package_path) = state.artifact_paths.package_path.clone() else {
