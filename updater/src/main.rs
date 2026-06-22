@@ -10,6 +10,7 @@ mod install_rollback;
 mod liveness;
 mod logging;
 mod notify;
+mod port_update;
 mod rollback;
 mod state;
 #[cfg(test)]

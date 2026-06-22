@@ -2882,7 +2882,8 @@ program
 
       // Write build-info.json so the update manager (factory-update-manager)
       // can detect whether a candidate DMG is already installed by comparing
-      // the upstream DMG SHA-256.
+      // the upstream DMG SHA-256, and whether a new port build is available
+      // by comparing the port build SHA against the GitHub release tag.
       const factoryLinuxDir = path.join(appDir, ".factory-linux");
       fs.mkdirSync(factoryLinuxDir, { recursive: true });
       fs.writeFileSync(
@@ -2897,6 +2898,7 @@ program
             factoryVersion: selectedVersion,
             electronVersion: options.electronVersion,
             buildTimestamp: new Date().toISOString(),
+            portBuildSha: process.env.GITHUB_SHA ?? null,
           },
           null,
           2

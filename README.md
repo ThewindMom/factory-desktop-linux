@@ -187,25 +187,35 @@ native installers.
 Default native packages install `factory-update-manager`, a companion
 `systemd --user` service.
 
-It:
+The daemon has **two independent update paths**:
 
-- checks upstream Factory Desktop DMG on daemon startup, every 6 hours, and
-  in the background on app launch when stale
-- rebuilds a local native package with
-  `node /opt/factory-desktop/update-builder/dist/cli.js build-all`
-- waits for Electron to exit before installing a ready update
-- runs unprivileged; the final package install uses `pkexec` with a polkit
+### Port build updates (new `.deb` from GitHub Releases)
+
+The daemon checks GitHub Releases for new port builds — `.deb` packages with
+the latest patches, droid, and asar fixes. It compares the `portBuildSha` in
+the installed `build-info.json` against the commit SHA the release tag points
+to (queried via the GitHub git refs API). If they differ, the daemon downloads
+the `.deb` and installs it using the same pkexec + polkit flow as upstream
+updates.
+
+Port updates take priority over upstream DMG rebuilds — they include the latest
+patches AND the latest droid, so they're strictly newer.
+
+### Upstream DMG updates (new Factory Desktop version)
+
+The daemon checks the upstream Factory Desktop DMG endpoint on startup, every
+6 hours, and on app launch when stale. When a new DMG version is detected, it
+downloads the DMG and rebuilds a local `.deb` using the builder code bundled at
+`.deb` install time (`/opt/factory-desktop/update-builder/`).
+
+### Shared install flow
+
+Both update paths converge on the same install machinery:
+
+- Waits for Electron to exit before installing a ready update
+- Runs unprivileged; the final package install uses `pkexec` with a polkit
   policy configured for **passwordless** installation (no password prompt)
-- performs rollback to the previous known-good package
-
-> **Known limitation:** The daemon's builder code is frozen at `.deb` install
-> time — it bundles `dist/cli.js` + `src/patches/` from the commit that built
-> the `.deb` into `/opt/factory-desktop/update-builder/`. When upstream
-> releases a new DMG, the daemon rebuilds using that frozen builder code, not
-> the latest patches from GitHub. Port fixes (patch updates, droid resolver
-> changes, etc.) only reach users who manually reinstall the `.deb`. A
-> future update feed (`latest-linux.yml`) would allow the daemon to check for
-> new port builds.
+- Performs rollback to the previous known-good package
 
 ### Inspect State
 
@@ -266,13 +276,12 @@ The workflow:
 6. Creates or updates a GitHub release with the `.deb` attached
 7. Moves the release tag to the current commit
 
-Release notes include the commit log since the previous release, the droid
-CLI version bundled, and the build timestamp.
+Release notes include the build SHA, commit log since the previous release,
+and the build timestamp.
 
-This provides pre-built packages for users who don't want to build from
-source. The Rust auto-update manager (in-app) operates independently — it
-rebuilds locally from the upstream DMG rather than downloading GitHub
-releases.
+The daemon's port-update check reads the tag's commit SHA directly via the
+GitHub git refs API — not `target_commitish` (which may be a branch name or
+stale).
 
 ## Prerequisites
 

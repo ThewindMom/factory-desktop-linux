@@ -4,7 +4,7 @@ use crate::{
     builder, cache_cleanup,
     cli::{Cli, Commands},
     config::{RuntimeConfig, RuntimePaths},
-    install, install_rollback, liveness, logging, notify, rollback,
+    install, install_rollback, liveness, logging, notify, port_update, rollback,
     state::{PersistedState, UpdateStatus},
     upstream,
 };
@@ -372,10 +372,55 @@ async fn run_check_cycle(
     let client = Client::builder().build()?;
 
     sync_runtime_state(config, state);
+    sync_installed_port_sha(config, state);
     state.status = UpdateStatus::CheckingUpstream;
     state.last_check_at = Some(Utc::now());
     state.error_message = None;
     persist_state(paths, state)?;
+
+    // Check for port build updates (new .deb on GitHub Releases) before
+    // checking upstream DMG. Port updates take priority — they include the
+    // latest patches AND the latest droid, so they're strictly newer.
+    if let Some(port_update) = port_update::check_for_port_update(
+        &client,
+        &config.github_owner,
+        &config.github_repo,
+        state.installed_port_sha.as_deref(),
+    )
+    .await?
+    {
+        info!(
+            release_sha = %port_update.release_sha,
+            "port build update detected"
+        );
+
+        if let (Some(deb_url), Some(deb_name)) =
+            (port_update.deb_url.as_ref(), port_update.deb_name.as_ref())
+        {
+            set_status(state, paths, UpdateStatus::DownloadingDmg)?;
+
+            let deb_dir = config.workspace_root.join("port-deb");
+            let downloaded =
+                port_update::download_deb(&client, deb_url, &deb_dir, deb_name).await?;
+
+            rollback::record_current_package_as_known_good(state);
+            state.status = UpdateStatus::ReadyToInstall;
+            state.port_candidate_sha = Some(port_update.release_sha.clone());
+            state.artifact_paths.package_path = Some(downloaded.path);
+            state.candidate_version = Some(state.installed_version.clone());
+            state.notified_events.clear();
+            state.save(&paths.state_file)?;
+
+            info!(deb = %deb_name, "port .deb downloaded and ready to install");
+            maybe_notify_update_ready(state, paths, config.notifications)?;
+            return Ok(());
+        }
+
+        // No .deb asset on the release — fall through to upstream check.
+        info!(
+            "port build update detected but no .deb asset found; falling through to upstream check"
+        );
+    }
 
     let result: Result<()> = async {
         let metadata =
@@ -584,7 +629,7 @@ async fn reconcile_pending_install(
                 return Ok(());
             }
 
-            trigger_install(state, paths, &config.workspace_root, &package_path).await?;
+            trigger_install(config, state, paths, &config.workspace_root, &package_path).await?;
         }
         _ => {}
     }
@@ -681,13 +726,15 @@ async fn run_install_ready(
         print_manual_install_required(&package_path);
         return Ok(());
     }
-    trigger_install(state, paths, &config.workspace_root, &package_path).await
+    trigger_install(config, state, paths, &config.workspace_root, &package_path).await
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstalledBuildInfo {
     upstream_dmg: Option<InstalledUpstreamDmg>,
+    #[serde(default)]
+    port_build_sha: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -756,7 +803,6 @@ fn clear_dmg_update_candidate(
     cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
     persist_state(paths, state)
 }
-
 fn installed_upstream_dmg_matches(config: &RuntimeConfig, sha256: &str) -> bool {
     installed_upstream_dmg_sha256(config).as_deref() == Some(sha256)
 }
@@ -765,6 +811,25 @@ fn installed_upstream_dmg_sha256(config: &RuntimeConfig) -> Option<String> {
     installed_build_info_paths(config)
         .into_iter()
         .find_map(|path| upstream_dmg_sha256_from_build_info(&path))
+}
+
+/// Read the portBuildSha from the installed build-info.json, if present.
+fn installed_port_build_sha(config: &RuntimeConfig) -> Option<String> {
+    installed_build_info_paths(config)
+        .into_iter()
+        .find_map(|path| {
+            let content = fs::read_to_string(&path).ok()?;
+            let build_info = serde_json::from_str::<InstalledBuildInfo>(&content).ok()?;
+            build_info.port_build_sha.filter(|value| !value.is_empty())
+        })
+}
+
+/// Sync the installed port SHA from build-info.json into persisted state.
+fn sync_installed_port_sha(config: &RuntimeConfig, state: &mut PersistedState) {
+    let current = installed_port_build_sha(config);
+    if current != state.installed_port_sha {
+        state.installed_port_sha = current;
+    }
 }
 
 fn installed_build_info_paths(config: &RuntimeConfig) -> Vec<PathBuf> {
@@ -1010,6 +1075,7 @@ fn maybe_send_notification(enabled: bool, summary: &str, body: &str) {
 }
 
 async fn trigger_install(
+    config: &RuntimeConfig,
     state: &mut PersistedState,
     paths: &RuntimePaths,
     workspace_root: &Path,
@@ -1037,10 +1103,10 @@ async fn trigger_install(
         state.installed_version = install::installed_package_version();
         state.candidate_version = None;
         state.rollback_blocked_candidate_version = None;
+        state.port_candidate_sha = None;
+        state.installed_port_sha = installed_port_build_sha(config);
         state.error_message = None;
         state.notified_events.clear();
-        cache_cleanup::normalize_artifact_workspace_dir(workspace_root, state);
-        persist_state(paths, state)?;
         let _ = maybe_notify_installed(state, paths, true);
         maybe_prune_workspace_cache(workspace_root, state);
         return Ok(());
@@ -1280,6 +1346,8 @@ mod tests {
 
     fn test_config(root: &std::path::Path) -> RuntimeConfig {
         RuntimeConfig {
+            github_owner: "ThewindMom".to_string(),
+            github_repo: "factory-desktop-linux".to_string(),
             dmg_api_url: "https://example.com/api/desktop".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 1,
@@ -1295,6 +1363,8 @@ mod tests {
     #[test]
     fn upstream_check_freshness_respects_configured_interval() {
         let config = RuntimeConfig {
+            github_owner: "ThewindMom".to_string(),
+            github_repo: "factory-desktop-linux".to_string(),
             dmg_api_url: "https://example.com/api/desktop".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 1,

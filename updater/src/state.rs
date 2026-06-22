@@ -78,6 +78,13 @@ pub struct PersistedState {
     pub last_known_good_version: Option<String>,
     #[serde(default)]
     pub rollback_blocked_candidate_version: Option<String>,
+    /// The port build SHA of the currently installed .deb, read from
+    /// build-info.json. Used to detect new port builds on GitHub Releases.
+    #[serde(default)]
+    pub installed_port_sha: Option<String>,
+    /// The port build SHA of a pending port .deb download (if any).
+    #[serde(default)]
+    pub port_candidate_sha: Option<String>,
 }
 
 impl PersistedState {
@@ -98,6 +105,8 @@ impl PersistedState {
             waiting_for_app_exit_auto_install: false,
             last_known_good_version: None,
             rollback_blocked_candidate_version: None,
+            installed_port_sha: None,
+            port_candidate_sha: None,
         }
     }
 
