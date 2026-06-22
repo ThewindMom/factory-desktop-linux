@@ -723,8 +723,11 @@ export function createElectronBuilderConfig(options: PackageBuildOptions, projec
       // "Macro uid is not defined" error.
       afterInstall: "packaging/linux/factory-desktop.postinst",
       afterRemove: "packaging/linux/factory-desktop.postrm",
-      ...(buildUpdaterExtraFiles(options, projectRoot) || {}),
     },
+    // extraFiles is a top-level Configuration property (not deb-specific).
+    // Bundles the update manager binary, systemd unit, polkit policy, and
+    // updater source into the package.
+    ...(buildUpdaterExtraFiles(options, projectRoot) || {}),
     appImage: {
       // AppImage-specific options
     },
