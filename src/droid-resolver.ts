@@ -460,11 +460,15 @@ export async function resolveDroid(
       };
     }
 
-    // Step 2: Find the closest matching version
-    const { version: cliVersion, match } = findClosestVersion(
-      requestedVersion,
-      availableVersions
-    );
+    // Step 2: Use the latest available droid version from npm.
+    // The droid CLI is a separate product from Factory Desktop — the
+    // macOS DMG bundles whatever version Factory chose, but on Linux
+    // we substitute from npm. Always using the latest ensures all
+    // daemon JSON-RPC methods are supported (e.g., daemon.list_custom_models
+    // was missing in older versions like 0.109.3).
+    const cliVersion = availableVersions[0];
+    const match: "exact" | "fallback" =
+      cliVersion === requestedVersion ? "exact" : "fallback";
 
     if (match === "fallback") {
       if (versionPolicy === VersionPolicy.Exact) {
@@ -485,8 +489,8 @@ export async function resolveDroid(
         };
       }
       warnings.push(
-        `Exact CLI version ${requestedVersion} not found on npm. ` +
-          `Using closest available: ${cliVersion}.`
+        `Using latest droid CLI version ${cliVersion} from npm ` +
+          `(requested ${requestedVersion}, but droid CLI is a separate product).`
       );
     }
 

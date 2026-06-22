@@ -16,7 +16,6 @@ import {
   resolveDroid,
   validateExistingDroid,
   formatDroidResult,
-  findClosestVersion,
   VersionPolicy,
   DroidResolutionResult,
 } from "../src/droid-resolver";
@@ -35,43 +34,6 @@ describe("buildDroidDownloadUrl", () => {
   it("includes the version in the URL", () => {
     const url = buildDroidDownloadUrl("1.2.3");
     expect(url).toContain("1.2.3");
-  });
-});
-
-// ============== Unit tests for findClosestVersion ==============
-
-describe("findClosestVersion", () => {
-  it("returns exact match when available", () => {
-    const available = ["0.108.0", "0.106.0", "0.104.0"];
-    const result = findClosestVersion("0.106.0", available);
-    expect(result.version).toBe("0.106.0");
-    expect(result.match).toBe("exact");
-  });
-
-  it("returns nearest fallback when exact not available", () => {
-    const available = ["0.111.0", "0.109.3", "0.108.0"];
-    // 0.110.0 not available; closest by numeric distance:
-    // 0.111.0 = dist 100, 0.109.3 = dist 97, 0.108.0 = dist 200
-    // So 0.109.3 is closest
-    const result = findClosestVersion("0.110.0", available);
-    expect(result.match).toBe("fallback");
-    expect(result.version).toBe("0.109.3");
-  });
-
-  it("prefers lower version when equidistant", () => {
-    const available = ["0.111.0", "0.109.0"];
-    // 0.110.0 is equidistant from both; should pick 0.109.0 (first found)
-    const result = findClosestVersion("0.110.0", available);
-    expect(result.match).toBe("fallback");
-    expect(["0.109.0", "0.111.0"]).toContain(result.version);
-  });
-
-  it("returns closest version when requested is far from all available", () => {
-    const available = ["0.153.1", "0.152.0"];
-    // 0.1.0 is far from both; 0.152.0 is closer (dist 15100 vs 15300)
-    const result = findClosestVersion("0.1.0", available);
-    expect(result.match).toBe("fallback");
-    expect(result.version).toBe("0.152.0");
   });
 });
 
@@ -253,7 +215,7 @@ describe("resolveDroid (npm version override)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("uses closest available version when exact not on npm", async () => {
+  it("uses latest available version when exact not on npm", async () => {
     // Simulate: requested 0.110.0, available list doesn't include it
     const result = await resolveDroid("0.110.0", path.join(tmpDir, "droid"), {
       npmVersionsOverride: ["0.111.0", "0.109.3", "0.108.0"],
@@ -277,14 +239,15 @@ describe("resolveDroid (npm version override)", () => {
     expect(result.errors.some((e) => e.includes("exact"))).toBe(true);
   });
 
-  it("finds exact match from npm version list", async () => {
+  it("uses latest version even when exact match exists in list", async () => {
     const result = await resolveDroid("0.108.0", path.join(tmpDir, "droid"), {
-      npmVersionsOverride: ["0.108.0", "0.106.0"],
+      npmVersionsOverride: ["0.111.0", "0.108.0", "0.106.0"],
       timeoutMs: 5000,
     });
 
-    // Should not have a fallback warning
-    expect(result.warnings.some((w) => w.includes("not found on npm"))).toBe(false);
+    // With always-latest policy, 0.111.0 (first in descending list) is picked
+    // The warning should mention "latest" since 0.111.0 != 0.108.0
+    expect(result.warnings.some((w) => w.includes("latest"))).toBe(true);
   });
 
   it("returns error when npm version list is empty", async () => {
