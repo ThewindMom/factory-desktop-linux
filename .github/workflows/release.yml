@@ -46,7 +46,7 @@ jobs:
 
   build-and-release:
     needs: check-and-release
-    if: needs.check-and-release.outputs.should_build == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.check-and-release.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -109,8 +109,29 @@ jobs:
       - name: Create or update GitHub release
         run: |
           if gh release view "v$FACTORY_VERSION" >/dev/null 2>&1; then
-            echo "Release v$FACTORY_VERSION already exists — updating asset."
+            echo "Release v$FACTORY_VERSION already exists — updating asset and notes."
             gh release upload "v$FACTORY_VERSION" "$DEB_PATH" --clobber
+            gh release edit "v$FACTORY_VERSION" \
+              --notes "Auto-built from upstream Factory Desktop $FACTORY_VERSION DMG.
+
+          **Includes:**
+          - Linux Electron runtime
+          - Droid CLI binary (from @factory/cli-linux-x64 npm)
+          - Version-agnostic asar patches:
+            - Daemon transport (force WebSocket on Linux)
+            - Auto-updater guard (disable Electron autoUpdater on Linux)
+            - Window controls (titleBarOverlay with dark-themed buttons)
+          - Rust auto-update manager (factory-update-manager)
+          - systemd --user service unit
+          - polkit policy
+
+          **Install:**
+          \`\`\`bash
+          sudo dpkg -i factory-desktop_${FACTORY_VERSION}_amd64.deb
+          sudo apt-get install -f -y
+          \`\`\`
+
+          Rebuilt by GitHub Actions on $(date -u +%Y-%m-%dT%H:%M:%SZ)."
           else
             gh release create "v$FACTORY_VERSION" \
               --title "Factory Desktop $FACTORY_VERSION (Linux)" \
