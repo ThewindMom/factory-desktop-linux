@@ -1,6 +1,19 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'src/**'
+      - 'packaging/**'
+      - 'patches/**'
+      - 'updater/**'
+      - 'Makefile'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/release.yml'
   schedule:
     # Run daily at 08:00 UTC
     - cron: '0 8 * * *'
