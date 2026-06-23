@@ -1443,7 +1443,7 @@ mod tests {
     fn test_config(root: &std::path::Path) -> RuntimeConfig {
         RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
-            github_repo: "factory-desktop-linux".to_string(),
+            github_repo: "factory-droid-desktop-linux-port".to_string(),
             dmg_api_url: "https://example.com/api/desktop".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 1,
@@ -1460,7 +1460,7 @@ mod tests {
     fn upstream_check_freshness_respects_configured_interval() {
         let config = RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
-            github_repo: "factory-desktop-linux".to_string(),
+            github_repo: "factory-droid-desktop-linux-port".to_string(),
             dmg_api_url: "https://example.com/api/desktop".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 1,

@@ -8,7 +8,7 @@ use std::{fs, path::PathBuf};
 const SERVICE_NAME: &str = "factory-update-manager";
 const DEFAULT_DESKTOP_API: &str = "https://app.factory.ai/api/desktop";
 const DEFAULT_GITHUB_OWNER: &str = "ThewindMom";
-const DEFAULT_GITHUB_REPO: &str = "factory-desktop-linux";
+const DEFAULT_GITHUB_REPO: &str = "factory-droid-desktop-linux-port";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Runtime configuration values that control how the updater behaves on Linux.
 pub struct RuntimeConfig {
@@ -25,7 +25,7 @@ pub struct RuntimeConfig {
     pub auto_install_on_app_exit: bool,
     pub notifications: bool,
     pub workspace_root: PathBuf,
-    /// Root of the builder checkout (the factory-desktop-linux repo).
+    /// Root of the builder checkout (the factory-droid-desktop-linux-port repo).
     /// Contains `dist/cli.js`, `package.json`, etc. In a packaged install
     /// this is `/opt/factory-desktop/update-builder`.
     pub builder_bundle_root: PathBuf,
@@ -176,7 +176,7 @@ mod tests {
     fn dmg_api_url_with_arch_appends_query() {
         let config = RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
-            github_repo: "factory-desktop-linux".to_string(),
+            github_repo: "factory-droid-desktop-linux-port".to_string(),
             dmg_api_url: DEFAULT_DESKTOP_API.to_string(),
             arch: "arm64".to_string(),
             initial_check_delay_seconds: 30,
@@ -197,7 +197,7 @@ mod tests {
     fn dmg_api_url_with_arch_preserves_existing_param() {
         let config = RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
-            github_repo: "factory-desktop-linux".to_string(),
+            github_repo: "factory-droid-desktop-linux-port".to_string(),
             dmg_api_url: "https://app.factory.ai/api/desktop?architecture=x64".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 30,
