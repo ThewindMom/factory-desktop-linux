@@ -144,17 +144,6 @@ jobs:
           VERSION=$(dpkg-deb --info "$DEB_PATH" | grep Version | awk '{print $2}')
           echo "FACTORY_VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: Generate latest-linux.yml update metadata
-        run: |
-          node dist/cli.js release-metadata \
-            --release-mode permission-cleared \
-            --release-version "$FACTORY_VERSION" \
-            --repo-owner "${{ github.repository_owner }}" \
-            --repo-name "$(basename ${{ github.repository }})" \
-            --output-dir dist \
-            --validate
-          echo "METADATA_PATH=dist/latest-linux.yml" >> $GITHUB_ENV
-
       - name: Create or update GitHub release
         run: |
           RELEASE_TAG="v$FACTORY_VERSION"
@@ -186,7 +175,6 @@ jobs:
           - Rust auto-update manager (factory-update-manager)
           - systemd --user service unit
           - polkit policy
-          - latest-linux.yml update metadata (electron-updater compatible)
 
           **Install (Debian/Ubuntu):**
           \`\`\`bash
@@ -208,13 +196,13 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists — updating asset, notes, and tag."
             gh release upload "$RELEASE_TAG" \
-              "$DEB_PATH" "$RPM_PATH" "$APPIMAGE_PATH" "$METADATA_PATH" --clobber
+              "$DEB_PATH" "$RPM_PATH" "$APPIMAGE_PATH" --clobber
             gh release edit "$RELEASE_TAG" --notes "$RELEASE_NOTES"
           else
             gh release create "$RELEASE_TAG" \
               --title "Factory Desktop $FACTORY_VERSION (Linux)" \
               --notes "$RELEASE_NOTES" \
-              "$DEB_PATH" "$RPM_PATH" "$APPIMAGE_PATH" "$METADATA_PATH"
+              "$DEB_PATH" "$RPM_PATH" "$APPIMAGE_PATH"
           fi
 
           # Move the tag to the current commit via the GitHub API so
