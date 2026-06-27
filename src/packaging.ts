@@ -926,16 +926,19 @@ export function validateAppImage(appImagePath: string): AppImageValidationResult
     // Ensure the extraction directory exists before running extraction
     fs.mkdirSync(extractDir, { recursive: true });
 
-    // Try to extract the AppImage
-    spawnSync(
-      appImagePath,
-      ["--appimage-extract"],
-      {
-        cwd: extractDir,
-        timeout: 60000,
-        encoding: "utf-8",
-      }
-    );
+    // Try to extract the AppImage. The extractor prints every path in the
+    // image; capturing that output can overflow spawnSync's default maxBuffer
+    // and leave a partial squashfs-root, producing false validation failures.
+    const extractResult = spawnSync(appImagePath, ["--appimage-extract"], {
+      cwd: extractDir,
+      timeout: 60000,
+      stdio: "ignore",
+    });
+    if (extractResult.status !== 0) {
+      errors.push(
+        `AppImage extraction exited with code ${extractResult.status ?? "unknown"}.`
+      );
+    }
 
     // The extraction creates squashfs-root/ in the cwd
     const squashRoot = path.join(extractDir, "squashfs-root");

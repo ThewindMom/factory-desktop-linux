@@ -802,25 +802,44 @@ program
       process.exit(1);
     }
 
-    // Determine factory version
+    // Determine Factory Desktop version. Electron's prepackaged appDir also
+    // contains a top-level `version` file, but that is the Electron runtime
+    // version (for example 39.2.7), not the Factory Desktop release. Prefer
+    // the Linux build metadata written during assembly.
     let factoryVersion = options.factoryVersion;
     if (!factoryVersion) {
-      // Try to read from version file in the app directory
-      const versionFile = path.join(appDir, "version");
-      if (fs.existsSync(versionFile)) {
-        factoryVersion = fs.readFileSync(versionFile, "utf-8").trim();
-      } else {
-        // Try to get from the directory name
-        const dirBasename = path.basename(appDir);
-        const versionMatch = dirBasename.match(/(\d+\.\d+\.\d+)/);
-        if (versionMatch) {
-          factoryVersion = versionMatch[1];
+      const buildInfoFile = path.join(
+        appDir,
+        ".factory-linux",
+        "build-info.json"
+      );
+      if (fs.existsSync(buildInfoFile)) {
+        try {
+          const buildInfo = JSON.parse(fs.readFileSync(buildInfoFile, "utf-8"));
+          if (typeof buildInfo.factoryVersion === "string") {
+            factoryVersion = buildInfo.factoryVersion;
+          }
+        } catch {
+          // Fall through to the older heuristics below.
+        }
+      }
+
+      if (!factoryVersion) {
+        const versionFile = path.join(appDir, "version");
+        if (fs.existsSync(versionFile)) {
+          factoryVersion = fs.readFileSync(versionFile, "utf-8").trim();
         } else {
-          process.stderr.write(
-            `Cannot determine Factory Desktop version. ` +
-            `Use --factory-version <X.Y.Z> to specify.\n`
-          );
-          process.exit(1);
+          const dirBasename = path.basename(appDir);
+          const versionMatch = dirBasename.match(/(\d+\.\d+\.\d+)/);
+          if (versionMatch) {
+            factoryVersion = versionMatch[1];
+          } else {
+            process.stderr.write(
+              `Cannot determine Factory Desktop version. ` +
+              `Use --factory-version <X.Y.Z> to specify.\n`
+            );
+            process.exit(1);
+          }
         }
       }
     }
@@ -2938,13 +2957,24 @@ program
           fs.copyFileSync(polkitFile, path.join(updaterStagingDir, "org.factory.desktop.update-manager.policy"));
         }
 
-        // Builder checkout for local rebuilds
+        // Builder checkout for local rebuilds. The compiled CLI lives in
+        // dist/, but dist/ is also the package output directory. Filter
+        // release artifacts so a previous .deb/.rpm/AppImage never gets
+        // embedded inside the next package's update-builder payload.
         const builderStagingDir = path.join(factoryLinuxDir, "update-builder");
         fs.mkdirSync(builderStagingDir, { recursive: true });
         for (const dir of ["dist", "node_modules", "src", "assets"]) {
           const srcDir = path.join(projectRoot, dir);
           if (fs.existsSync(srcDir)) {
-            fs.cpSync(srcDir, path.join(builderStagingDir, dir), { recursive: true });
+            fs.cpSync(srcDir, path.join(builderStagingDir, dir), {
+              recursive: true,
+              filter: (source) => {
+                if (dir !== "dist") return true;
+                return !/\.(deb|rpm|AppImage|blockmap|ya?ml|sha256)$/i.test(
+                  path.basename(source)
+                );
+              },
+            });
           }
         }
         for (const file of ["package.json", "package-lock.json", "tsconfig.json"]) {

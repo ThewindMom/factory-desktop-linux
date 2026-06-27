@@ -116,7 +116,7 @@ impl RuntimeConfig {
             arch: default_arch(),
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
-            auto_install_on_app_exit: true,
+            auto_install_on_app_exit: false,
             notifications: true,
             workspace_root: paths.cache_dir.clone(),
             builder_bundle_root,
@@ -170,6 +170,7 @@ mod tests {
         assert_eq!(config.dmg_api_url, DEFAULT_DESKTOP_API);
         assert_eq!(config.arch, "x64");
         assert_eq!(config.check_interval_hours, 6);
+        assert!(!config.auto_install_on_app_exit);
     }
 
     #[test]

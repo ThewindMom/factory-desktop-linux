@@ -19,6 +19,7 @@ import type { DaemonTransportPatchResult } from "../daemon-transport-patch";
 import { patchDaemonTransport } from "../daemon-transport-patch";
 import { patchAutoUpdater } from "../auto-updater-patch";
 import { patchWindowControls } from "../window-controls-patch";
+import { patchAboutPanel } from "../about-panel-patch";
 
 // ─── Patch contract ────────────────────────────────────────────────────────
 
@@ -161,11 +162,32 @@ const windowControlsPatch: Patch = {
     }),
 };
 
+/**
+ * The about panel patch augments the existing "About Factory" dialog on Linux
+ * and injects a closeable top-right in-app status panel. Both surfaces show the
+ * bundled droid CLI version and update state from the factory-update-manager
+ * daemon (state.json); the panel can also expose a copyable manual command for
+ * desktop updates or stale remote daemon restarts.
+ */
+const aboutPanelPatch: Patch = {
+  id: "about-panel",
+  description:
+    "Augment About Factory and inject a closeable top-right status panel " +
+      "showing Factory Desktop, bundled droid CLI, and update state.",
+  apply: (options) =>
+    patchAboutPanel({
+      asarPath: options.asarPath,
+      skipIfPatched: options.skipIfPatched,
+      tolerateMissingTarget: options.tolerateMissingTarget,
+    }),
+};
+
 /** All registered core patches, in apply order. */
 export const REGISTERED_PATCHES: ReadonlyArray<Patch> = [
   daemonTransportPatch,
   autoUpdaterPatch,
   windowControlsPatch,
+  aboutPanelPatch,
 ];
 
 // ─── Registry entry point ───────────────────────────────────────────────────

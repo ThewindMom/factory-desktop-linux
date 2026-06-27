@@ -147,7 +147,7 @@ id, a description, an `apply()`, and an isolated result. Patches use
 **version-agnostic regex patterns** that match structural code shapes, not
 hardcoded minified strings — so they survive upstream version bumps.
 
-The registry currently ships three core patches:
+The registry currently ships four core patches:
 
 - **`daemon-transport`** — forces WebSocket daemon transport on Linux and guards
   against `droid daemon --listen ipc`. While the latest droid CLI supports
@@ -168,6 +168,16 @@ The registry currently ships three core patches:
   time, causing the window to silently fail to appear. Without this, the app
   uses `"hidden"` titleBarStyle on Linux (because it's not win32), resulting in
   no title bar at all.
+
+- **`about-panel`** — augments the existing "About Factory" dialog on Linux
+  (Help → About Factory) and injects a closeable top-right in-app status panel.
+  Both surfaces show the Factory Desktop version, the bundled droid CLI version,
+  and update state from the `factory-update-manager` daemon; the panel can also
+  show/copy a prepared manual command when a desktop update is ready or a stale
+  remote daemon is still running. Without this, users have no clear in-app way
+  to distinguish the desktop build, bundled CLI, and remote daemon state. The
+  patch reads `build-info.json` and `state.json` at runtime and degrades
+  gracefully to the original values if either file is missing.
 
 ### 3. Droid CLI binary
 

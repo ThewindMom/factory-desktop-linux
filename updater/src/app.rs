@@ -109,8 +109,8 @@ fn persist_if_changed(
     Ok(())
 }
 
-fn effective_auto_install(config: &RuntimeConfig) -> bool {
-    config.auto_install_on_app_exit
+fn effective_auto_install(_config: &RuntimeConfig) -> bool {
+    false
 }
 
 fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
@@ -675,10 +675,19 @@ async fn reconcile_pending_install(
                 return Ok(());
             }
 
-            // App is NOT running (or auto_install disabled) — install now.
-            // This mirrors the WaitingForAppExit arm's pre-install checks.
-            // Without this, the daemon gets stuck at ReadyToInstall forever
-            // when the app was never started or was already closed.
+            if !state.auto_install_on_app_exit {
+                maybe_notify(
+                    state,
+                    paths,
+                    config.notifications,
+                    "ready_to_install_manual",
+                    "Factory Desktop update ready",
+                    "Run: factory-update-manager install-ready",
+                )?;
+                return Ok(());
+            }
+
+            // App is NOT running and auto-install is enabled — install now.
             if install_auth_retry_is_blocked(state) {
                 return Ok(());
             }
@@ -829,13 +838,20 @@ async fn run_install_ready(
             return Ok(());
         }
         clear_install_auth_required_event(state, paths)?;
-        set_waiting_for_app_exit(state, paths, false)?;
+        state.waiting_for_app_exit_auto_install = false;
+        if state.status == UpdateStatus::WaitingForAppExit {
+            set_status(state, paths, UpdateStatus::ReadyToInstall)?;
+        } else {
+            persist_state(paths, state)?;
+        }
         maybe_send_notification(
             config.notifications,
             "Factory Desktop update ready",
-            "Close Factory Desktop to install the ready update.",
+            "Close Factory Desktop, then run: factory-update-manager install-ready",
         );
-        println!("Factory Desktop is running. Close it to install the ready update.");
+        println!(
+            "Factory Desktop is running. Close it, then run: factory-update-manager install-ready"
+        );
         return Ok(());
     }
 
