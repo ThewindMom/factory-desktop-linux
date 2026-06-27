@@ -190,6 +190,14 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).toContain("const render=()=>{try{");
     expect(patchedContent).toContain("__factoryLinuxVersionChipTimer");
     expect(patchedContent).toContain("setInterval(render,5000)");
+    expect(patchedContent).not.toContain(
+      "clearInterval(_t.__factoryLinuxVersionChipTimer)",
+    );
+    expect(patchedContent).not.toContain(
+      "_t.__factoryLinuxVersionChipTimer=null",
+    );
+    expect(patchedContent).toContain("const t=setInterval(render,5000)");
+    expect(patchedContent).toContain('_t.on("closed",()=>{clearInterval(t)})');
     const rendererMatches = [
       ...patchedContent.matchAll(
         /const js=([\s\S]*?);_t\.webContents\.executeJavaScript/g,
@@ -283,9 +291,11 @@ describe("patchAboutPanel", () => {
       "position:fixed;right:16px;top:44px;z-index:2147483647;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 9px;background:rgba(20,20,20,.86);color:rgba(255,255,255,.78);font:11px/1.2 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;backdrop-filter:blur(8px);box-shadow:0 6px 18px rgba(0,0,0,.22);pointer-events:none;user-select:none;";
     const oldChipText =
       'const parts=["Factory "+v];if(b.droidVersion)parts.push("Droid "+b.droidVersion);const text=parts.join(" · ");';
+    const oldTimerCleanup =
+      'if(!_t.__factoryLinuxVersionChipTimer){_t.__factoryLinuxVersionChipTimer=setInterval(render,5000);_t.on("closed",()=>{clearInterval(_t.__factoryLinuxVersionChipTimer);_t.__factoryLinuxVersionChipTimer=null})}';
     const patchedContent =
       'function gu(){detail:(()=>{/* linux-about-panel-patch */try{const v=Y.app.getVersion();return v}catch(e){}})()}' +
-      `function createWindow(){_t.webContents.on("did-finish-load",()=>{/* linux-visible-version-chip-patch */${oldChipText}e.style.cssText='${oldChipStyle}';})}`;
+      `function createWindow(){_t.webContents.on("did-finish-load",()=>{/* linux-visible-version-chip-patch */${oldChipText}e.style.cssText='${oldChipStyle}';${oldTimerCleanup}})}`;
     fs.writeFileSync(
       path.join(buildDir, "index-OldChipPosition.js"),
       patchedContent,
@@ -321,6 +331,14 @@ describe("patchAboutPanel", () => {
     expect(migratedContent).toContain("Factory Desktop update available");
     expect(migratedContent).not.toContain("System Droid CLI");
     expect(migratedContent).not.toContain('parts.join(" · ")');
+    expect(migratedContent).not.toContain(
+      "clearInterval(_t.__factoryLinuxVersionChipTimer)",
+    );
+    expect(migratedContent).not.toContain(
+      "_t.__factoryLinuxVersionChipTimer=null",
+    );
+    expect(migratedContent).toContain("const t=setInterval(render,5000)");
+    expect(migratedContent).toContain('_t.on("closed",()=>{clearInterval(t)})');
     expect(migratedTopContent).not.toContain("top:44px");
     expect(migratedTopContent).toContain("top:38px");
     expect(migratedTopContent).toContain("min-width:220px");

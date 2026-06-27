@@ -87,6 +87,8 @@ const OLD_CHIP_DROID_LABEL =
 const CHIP_DROID_LABEL = "";
 const OLD_CHIP_TEXT_JOIN = 'const text=parts.join(" · ");';
 const CHIP_TEXT_JOIN = 'const text=parts.join("\\n");';
+const OLD_CHIP_TIMER_CLEANUP_REGEX =
+  /if\(!(\w+)\.__factoryLinuxVersionChipTimer\)\{\1\.__factoryLinuxVersionChipTimer=setInterval\(render,5000\);\1\.on\("closed",\(\)=>\{clearInterval\(\1\.__factoryLinuxVersionChipTimer\);\1\.__factoryLinuxVersionChipTimer=null\}\)\}/;
 
 /**
  * Regex matching the existing About Factory dialog's `detail:` template.
@@ -202,7 +204,7 @@ function buildInjectedVisibleVersionChip(
     `const btn=document.createElement('button');btn.type='button';btn.id='factory-linux-version-update';btn.style.cssText='${CHIP_UPDATE_BUTTON_CSS}';btn.textContent=d.cta||'Copy update command';btn.onclick=async()=>{try{await navigator.clipboard.writeText(d.command);btn.textContent='Copied'}catch(_){btn.textContent=d.command}};e.appendChild(btn);document.body.appendChild(e)}` +
     `const body=e.querySelector('#factory-linux-version-chip-body');if(body)body.textContent=d.text.join('\\\\n');const code=e.querySelector('#factory-linux-version-command');if(code)code.remove();const btn=e.querySelector('#factory-linux-version-update');if(btn){btn.style.display=d.command?'block':'none';if(d.command)btn.textContent=d.cta||'Copy update command'}})()";` +
     `${windowRef}.webContents.executeJavaScript(js,true).catch(()=>{})` +
-    `}catch(e){}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){${windowRef}.__factoryLinuxVersionChipTimer=setInterval(render,5000);${windowRef}.on("closed",()=>{clearInterval(${windowRef}.__factoryLinuxVersionChipTimer);${windowRef}.__factoryLinuxVersionChipTimer=null})}})()})`
+    `}catch(e){}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const t=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=t;${windowRef}.on("closed",()=>{clearInterval(t)})}})()})`
   );
 }
 
@@ -296,6 +298,20 @@ export async function patchAboutPanel(
           migrated = true;
         }
       }
+      const oldTimerCleanupMatch = patchedContent.match(
+        OLD_CHIP_TIMER_CLEANUP_REGEX,
+      );
+      const timerWindowRef = oldTimerCleanupMatch?.[1];
+      if (timerWindowRef) {
+        patchedContent = patchedContent.replace(
+          OLD_CHIP_TIMER_CLEANUP_REGEX,
+          `if(!${timerWindowRef}.__factoryLinuxVersionChipTimer){` +
+            `const t=setInterval(render,5000);` +
+            `${timerWindowRef}.__factoryLinuxVersionChipTimer=t;` +
+            `${timerWindowRef}.on("closed",()=>{clearInterval(t)})}`,
+        );
+        migrated = true;
+      }
       if (migrated) {
         try {
           await applyAsarContentPatch(
@@ -307,8 +323,8 @@ export async function patchAboutPanel(
           patches.push({
             id: "linux-visible-version-chip-prominence",
             description:
-              "Make the visible frontend version/status chip prominent and " +
-              "label Factory and Droid versions explicitly",
+              "Update the visible frontend version/status chip and close " +
+              "handler for current Linux behavior",
             originalSnippet: oldChipStyle ?? "legacy visible chip text",
             replacementSnippet: CHIP_STYLE_CSS,
           });
