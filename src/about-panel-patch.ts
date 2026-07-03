@@ -89,6 +89,8 @@ const OLD_CHIP_TEXT_JOIN = 'const text=parts.join(" · ");';
 const CHIP_TEXT_JOIN = 'const text=parts.join("\\n");';
 const OLD_CHIP_TIMER_CLEANUP_REGEX =
   /if\(!(\w+)\.__factoryLinuxVersionChipTimer\)\{\1\.__factoryLinuxVersionChipTimer=setInterval\(render,5000\);\1\.on\("closed",\(\)=>\{clearInterval\(\1\.__factoryLinuxVersionChipTimer\);\1\.__factoryLinuxVersionChipTimer=null\}\)\}/;
+const SHADOWED_CHIP_TIMER_REGEX =
+  /if\(!(\w+)\.__factoryLinuxVersionChipTimer\)\{const \w+=setInterval\(render,5000\);\1\.__factoryLinuxVersionChipTimer=\w+;\w+\.on\("closed",\(\)=>\{clearInterval\(\w+\)\}\)\}/;
 
 /**
  * Regex matching the existing About Factory dialog's `detail:` template.
@@ -204,7 +206,7 @@ function buildInjectedVisibleVersionChip(
     `const btn=document.createElement('button');btn.type='button';btn.id='factory-linux-version-update';btn.style.cssText='${CHIP_UPDATE_BUTTON_CSS}';btn.textContent=d.cta||'Update';btn.onclick=()=>{window.__factoryLinuxUpdateRequest=d.action;btn.textContent='Starting...'};e.appendChild(btn);document.body.appendChild(e)}` +
     `const body=e.querySelector('#factory-linux-version-chip-body');if(body)body.textContent=d.text.join('\\\\n');const code=e.querySelector('#factory-linux-version-command');if(code)code.remove();const btn=e.querySelector('#factory-linux-version-update');if(btn){btn.style.display=d.action?'block':'none';if(d.action)btn.textContent=d.cta||'Update'}const req=window.__factoryLinuxUpdateRequest||'';window.__factoryLinuxUpdateRequest='';return req})()";` +
     `${windowRef}.webContents.executeJavaScript(js,true).then((req)=>{if(req==="install-ready"||req==="check-now"){try{require("child_process").spawn("factory-update-manager",[req],{detached:true,stdio:"ignore"}).unref()}catch(e){}}}).catch(()=>{})` +
-    `}catch(e){}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const t=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=t;${windowRef}.on("closed",()=>{clearInterval(t)})}})()})`
+    `}catch(e){}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const timer=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=timer;${windowRef}.on("closed",()=>{clearInterval(timer)})}})()})`
   );
 }
 
@@ -306,9 +308,21 @@ export async function patchAboutPanel(
         patchedContent = patchedContent.replace(
           OLD_CHIP_TIMER_CLEANUP_REGEX,
           `if(!${timerWindowRef}.__factoryLinuxVersionChipTimer){` +
-            `const t=setInterval(render,5000);` +
-            `${timerWindowRef}.__factoryLinuxVersionChipTimer=t;` +
-            `${timerWindowRef}.on("closed",()=>{clearInterval(t)})}`,
+            `const timer=setInterval(render,5000);` +
+            `${timerWindowRef}.__factoryLinuxVersionChipTimer=timer;` +
+            `${timerWindowRef}.on("closed",()=>{clearInterval(timer)})}`,
+        );
+        migrated = true;
+      }
+      const shadowedTimerMatch = patchedContent.match(SHADOWED_CHIP_TIMER_REGEX);
+      const shadowedTimerWindowRef = shadowedTimerMatch?.[1];
+      if (shadowedTimerWindowRef) {
+        patchedContent = patchedContent.replace(
+          SHADOWED_CHIP_TIMER_REGEX,
+          `if(!${shadowedTimerWindowRef}.__factoryLinuxVersionChipTimer){` +
+            `const timer=setInterval(render,5000);` +
+            `${shadowedTimerWindowRef}.__factoryLinuxVersionChipTimer=timer;` +
+            `${shadowedTimerWindowRef}.on("closed",()=>{clearInterval(timer)})}`,
         );
         migrated = true;
       }

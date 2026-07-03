@@ -199,8 +199,18 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).not.toContain(
       "_t.__factoryLinuxVersionChipTimer=null",
     );
-    expect(patchedContent).toContain("const t=setInterval(render,5000)");
-    expect(patchedContent).toContain('_t.on("closed",()=>{clearInterval(t)})');
+    expect(patchedContent).toContain(
+      "const timer=setInterval(render,5000)",
+    );
+    expect(patchedContent).toContain(
+      "_t.__factoryLinuxVersionChipTimer=timer",
+    );
+    expect(patchedContent).toContain(
+      '_t.on("closed",()=>{clearInterval(timer)})',
+    );
+    expect(patchedContent).not.toContain(
+      "const t=setInterval(render,5000);t.__factoryLinuxVersionChipTimer=t;t.on",
+    );
     const rendererMatches = [
       ...patchedContent.matchAll(
         /const js=([\s\S]*?);_t\.webContents\.executeJavaScript/g,
@@ -342,14 +352,63 @@ describe("patchAboutPanel", () => {
     expect(migratedContent).not.toContain(
       "_t.__factoryLinuxVersionChipTimer=null",
     );
-    expect(migratedContent).toContain("const t=setInterval(render,5000)");
-    expect(migratedContent).toContain('_t.on("closed",()=>{clearInterval(t)})');
+    expect(migratedContent).toContain("const timer=setInterval(render,5000)");
+    expect(migratedContent).toContain(
+      "_t.__factoryLinuxVersionChipTimer=timer",
+    );
+    expect(migratedContent).toContain(
+      '_t.on("closed",()=>{clearInterval(timer)})',
+    );
+    expect(migratedContent).not.toContain(
+      "const t=setInterval(render,5000);t.__factoryLinuxVersionChipTimer=t;t.on",
+    );
     expect(migratedTopContent).not.toContain("top:44px");
     expect(migratedTopContent).toContain("left:16px");
     expect(migratedTopContent).toContain("top:40px");
     expect(migratedTopContent).toContain("min-width:220px");
     expect(migratedTopContent).toContain("Factory Desktop update available");
     expect(migratedTopContent).not.toContain("System Droid CLI");
+  });
+
+  it("migrates already-patched chips with shadowed timer handles", async () => {
+    const asar = await import("@electron/asar");
+    const fs = await import("fs");
+    const path = await import("path");
+
+    const tmpDir = expect.getState().testPath + ".tmp-shadow-" + Date.now();
+    tmpDirs.push(tmpDir);
+    const buildDir = path.join(tmpDir, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+
+    const patchedContent =
+      'function gu(){detail:(()=>{/* linux-about-panel-patch */try{const v=Y.app.getVersion();return v}catch(e){}})()}' +
+      `function createWindow(){t.webContents.on("did-finish-load",()=>{/* linux-visible-version-chip-patch */if(!t.__factoryLinuxVersionChipTimer){const t=setInterval(render,5000);t.__factoryLinuxVersionChipTimer=t;t.on("closed",()=>{clearInterval(t)})}})}`;
+    fs.writeFileSync(
+      path.join(buildDir, "index-ShadowedTimer.js"),
+      patchedContent,
+    );
+
+    const asarPath = path.join(tmpDir, "app.asar");
+    await asar.createPackage(tmpDir, asarPath);
+
+    const result = await patchAboutPanel({ asarPath });
+
+    expect(result.success).toBe(true);
+    expect(result.patched).toBe(true);
+
+    const migratedContent = asar
+      .extractFile(asarPath, ".vite/build/index-ShadowedTimer.js")
+      .toString("utf-8");
+    expect(migratedContent).toContain("const timer=setInterval(render,5000)");
+    expect(migratedContent).toContain(
+      "t.__factoryLinuxVersionChipTimer=timer",
+    );
+    expect(migratedContent).toContain(
+      't.on("closed",()=>{clearInterval(timer)})',
+    );
+    expect(migratedContent).not.toContain(
+      "const t=setInterval(render,5000);t.__factoryLinuxVersionChipTimer=t;t.on",
+    );
   });
 
   it("adds the visible chip to bundles that already have only the About patch", async () => {
