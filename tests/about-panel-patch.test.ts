@@ -187,6 +187,8 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).toContain("__factoryLinuxUpdateRequest");
     expect(patchedContent).toContain("child_process");
     expect(patchedContent).toContain("spawn");
+    expect(patchedContent).toContain('if(req==="install-ready")');
+    expect(patchedContent).toContain('require("electron").app.quit()');
     expect(patchedContent).not.toContain("navigator.clipboard.writeText");
     expect(patchedContent).toContain(String.raw`body.textContent=d.text.join('\\n')`);
     expect(patchedContent).not.toContain(String.raw`body.textContent=d.text.join('\n')`);

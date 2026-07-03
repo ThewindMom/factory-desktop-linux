@@ -237,6 +237,7 @@ downloads the DMG and rebuilds a local `.deb` using the builder code bundled at
 Both update paths converge on the same install machinery:
 
 - Waits for Electron to exit before installing a ready update
+- Relaunches Factory Desktop after the package install succeeds
 - Runs unprivileged; the final package install uses `pkexec` with a polkit
   policy configured for **passwordless** installation (no password prompt)
 - Performs rollback to the previous known-good package

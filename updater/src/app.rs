@@ -16,11 +16,13 @@ use std::{
     fs::{self, OpenOptions},
     io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
 const RECONCILE_INTERVAL_SECONDS: u64 = 15;
+const DISABLE_RELAUNCH_ENV: &str = "FACTORY_UPDATE_MANAGER_DISABLE_RELAUNCH";
 const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "budgie-polkit",
     "cinnamon-polkit",
@@ -870,20 +872,13 @@ async fn run_install_ready(
             return Ok(());
         }
         clear_install_auth_required_event(state, paths)?;
-        state.waiting_for_app_exit_auto_install = false;
-        if state.status == UpdateStatus::WaitingForAppExit {
-            set_status(state, paths, UpdateStatus::ReadyToInstall)?;
-        } else {
-            persist_state(paths, state)?;
-        }
+        set_waiting_for_app_exit(state, paths, true)?;
         maybe_send_notification(
             config.notifications,
             "Factory Desktop update ready",
-            "Close Factory Desktop, then run: factory-update-manager install-ready",
+            "Factory Desktop will install the update after it closes.",
         );
-        println!(
-            "Factory Desktop is running. Close it, then run: factory-update-manager install-ready"
-        );
+        println!("Factory Desktop is running. The update will install after it closes.");
         return Ok(());
     }
 
@@ -1276,7 +1271,7 @@ fn maybe_notify_installed(
         enabled,
         "installed",
         "Factory Desktop updated",
-        "The new package is installed and will be used the next time you open the app.",
+        "The new package is installed. Factory Desktop is reopening.",
     )
 }
 
@@ -1470,6 +1465,7 @@ async fn finalize_install_result(
         let _ = maybe_notify_installed(state, paths, true);
         maybe_prune_workspace_cache(workspace_root, state);
         persist_state(paths, state)?;
+        maybe_relaunch_app_after_update(config);
         return Ok(());
     }
 
@@ -1554,6 +1550,7 @@ fn check_install_completion(
             maybe_prune_workspace_cache(&config.workspace_root, state);
             let _ = maybe_notify_installed(state, paths, config.notifications);
             persist_state(paths, state)?;
+            maybe_relaunch_app_after_update(config);
             info!("install completed successfully (detected via sentinel)");
             Ok(true)
         } else {
@@ -1617,6 +1614,53 @@ fn reset_install_unit() {
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "reset-failed", "factory-install-task"])
         .status();
+}
+
+fn maybe_relaunch_app_after_update(config: &RuntimeConfig) {
+    if std::env::var_os(DISABLE_RELAUNCH_ENV).is_some() {
+        info!("skipping Factory relaunch because relaunch is disabled by environment");
+        return;
+    }
+
+    if !config.app_executable_path.exists() {
+        warn!(
+            app = %config.app_executable_path.display(),
+            "skipping Factory relaunch because the app executable does not exist"
+        );
+        return;
+    }
+
+    match liveness::is_app_running(config) {
+        Ok(true) => {
+            info!("skipping Factory relaunch because the app is already running");
+            return;
+        }
+        Ok(false) => {}
+        Err(error) => {
+            warn!(
+                ?error,
+                "could not determine whether Factory is already running before relaunch"
+            );
+        }
+    }
+
+    let mut command = Command::new(&config.app_executable_path);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(app_dir) = config.app_executable_path.parent() {
+        command.current_dir(app_dir);
+    }
+
+    match command.spawn() {
+        Ok(child) => {
+            info!(pid = child.id(), "relaunched Factory Desktop after update");
+        }
+        Err(error) => {
+            warn!(?error, "failed to relaunch Factory Desktop after update");
+        }
+    }
 }
 
 fn pkexec_authentication_was_not_obtained(status: &std::process::ExitStatus) -> bool {
@@ -1936,6 +1980,36 @@ mod tests {
         assert_eq!(state.artifact_paths.package_path, None);
         assert_eq!(state.error_message, None);
         assert!(state.notified_events.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_ready_while_app_is_running_waits_for_exit() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "FACTORY_UPDATE_MANAGER_ASSUME_POLKIT_AGENT",
+        ]);
+        std::env::set_var("FACTORY_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
+
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let package_path = temp.path().join("factory-desktop_0.122.0_amd64.deb");
+        fs::write(&package_path, b"mock package")?;
+
+        let mut config = test_config(temp.path());
+        config.app_executable_path = std::env::current_exe()?;
+
+        let mut state = PersistedState::new(false);
+        state.status = UpdateStatus::ReadyToInstall;
+        state.installed_version = "0.121.0".to_string();
+        state.candidate_version = Some("0.122.0".to_string());
+        state.artifact_paths.package_path = Some(package_path);
+
+        run_install_ready(&config, &mut state, &paths).await?;
+
+        assert_eq!(state.status, UpdateStatus::WaitingForAppExit);
+        assert!(state.waiting_for_app_exit_auto_install);
         Ok(())
     }
 
