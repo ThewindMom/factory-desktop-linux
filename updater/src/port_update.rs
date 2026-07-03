@@ -56,6 +56,7 @@ struct GitRefObject {
 pub struct PortUpdateCheck {
     /// The commit SHA the release tag points to.
     pub release_sha: String,
+    pub release_version: String,
     /// The .deb asset download URL, if a .deb asset was found.
     pub deb_url: Option<String>,
     /// The .deb asset name.
@@ -142,6 +143,7 @@ pub async fn check_for_port_update(
         return Ok(None);
     };
 
+    let release_version = release_version_from_tag(&release.tag_name)?;
     let release_sha = fetch_tag_sha(client, owner, repo, &release.tag_name).await?;
 
     // If the installed build SHA matches the release SHA, no update needed.
@@ -168,9 +170,18 @@ pub async fn check_for_port_update(
 
     Ok(Some(PortUpdateCheck {
         release_sha,
+        release_version,
         deb_url,
         deb_name,
     }))
+}
+
+fn release_version_from_tag(tag_name: &str) -> Result<String> {
+    let version = tag_name.strip_prefix('v').unwrap_or(tag_name);
+    if version.is_empty() {
+        anyhow::bail!("GitHub release tag is empty");
+    }
+    Ok(version.to_string())
 }
 
 /// Download a `.deb` package from a URL and compute its SHA-256.
@@ -253,6 +264,13 @@ mod tests {
         assert_eq!(release.assets.len(), 2);
         assert_eq!(release.assets[0].name, "factory-desktop_0.110.0_amd64.deb");
         assert!(release.assets[0].browser_download_url.contains(".deb"));
+    }
+
+    #[test]
+    fn test_release_version_from_tag() {
+        assert_eq!(release_version_from_tag("v0.121.0").unwrap(), "0.121.0");
+        assert_eq!(release_version_from_tag("0.121.0").unwrap(), "0.121.0");
+        assert!(release_version_from_tag("v").is_err());
     }
 
     #[test]

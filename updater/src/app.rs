@@ -64,9 +64,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::InstallDeb { path, result_file } => {
             write_install_result(&path, result_file.as_deref(), install::install_deb(&path))
         }
-        Commands::InstallRollbackDeb { path, result_file } => {
-            write_install_result(&path, result_file.as_deref(), install_rollback::install_deb(&path))
-        }
+        Commands::InstallRollbackDeb { path, result_file } => write_install_result(
+            &path,
+            result_file.as_deref(),
+            install_rollback::install_deb(&path),
+        ),
     }
 }
 
@@ -328,6 +330,7 @@ async fn run_check_now(
     normalize_workspace_dir_and_persist(state, paths)?;
     maybe_prune_workspace_cache(&config.workspace_root, state);
     maybe_notify_installed(state, paths, config.notifications)?;
+    clear_superseded_pending_for_manual_check(state, paths)?;
     if if_stale && upstream_check_is_fresh(config, state) {
         info!("skipping check-now because the last successful upstream check is still fresh");
         return reconcile_pending_install(config, state, paths).await;
@@ -402,12 +405,21 @@ async fn run_status(
         let mut json_state = serde_json::to_value(state)?;
         let obj = json_state.as_object_mut().unwrap();
         if let Some(ref v) = installed_droid {
-            obj.insert("droid_version".to_string(), serde_json::Value::String(v.clone()));
+            obj.insert(
+                "droid_version".to_string(),
+                serde_json::Value::String(v.clone()),
+            );
         }
         if let Some(ref v) = latest_droid {
-            obj.insert("droid_latest_version".to_string(), serde_json::Value::String(v.clone()));
+            obj.insert(
+                "droid_latest_version".to_string(),
+                serde_json::Value::String(v.clone()),
+            );
         }
-        obj.insert("droid_drift".to_string(), serde_json::Value::Bool(droid_drift));
+        obj.insert(
+            "droid_drift".to_string(),
+            serde_json::Value::Bool(droid_drift),
+        );
         println!("{}", serde_json::to_string_pretty(&json_state)?);
     } else {
         println!("status: {:?}", state.status);
@@ -505,7 +517,7 @@ async fn run_check_cycle(
             state.status = UpdateStatus::ReadyToInstall;
             state.port_candidate_sha = Some(port_update.release_sha.clone());
             state.artifact_paths.package_path = Some(downloaded.path);
-            state.candidate_version = Some(state.installed_version.clone());
+            state.candidate_version = Some(port_update.release_version.clone());
             state.notified_events.clear();
             state.save(&paths.state_file)?;
 
@@ -1040,7 +1052,46 @@ fn complete_pending_install_if_already_installed(
     Ok(true)
 }
 
-fn recover_interrupted_install(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+fn clear_superseded_pending_for_manual_check(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<bool> {
+    if !matches!(
+        state.status,
+        UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit
+    ) {
+        return Ok(false);
+    }
+
+    let Some(candidate_version) = state.candidate_version.clone().filter(|candidate| {
+        installed_version_satisfies_candidate(&state.installed_version, candidate)
+    }) else {
+        return Ok(false);
+    };
+
+    let candidate_is_installed =
+        installed_version_matches_candidate(&state.installed_version, &candidate_version);
+
+    state.status = UpdateStatus::Installed;
+    state.waiting_for_app_exit_auto_install = false;
+    state.candidate_version = None;
+    state.port_candidate_sha = None;
+    if candidate_is_installed {
+        state.artifact_paths.package_path = None;
+    }
+    state.error_message = None;
+    state.notified_events.clear();
+    cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
+    persist_state(paths, state)?;
+    info!("cleared superseded pending update before manual check");
+    Ok(true)
+}
+
+fn recover_interrupted_install(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<()> {
     if state.status != UpdateStatus::Installing {
         return Ok(());
     }
@@ -1313,12 +1364,30 @@ async fn trigger_install(
             // systemd-run itself failed (not the install). Fall back to the
             // old synchronous pkexec path — better than no install at all.
             warn!(status = %status, "systemd-run failed; falling back to direct pkexec");
-            trigger_install_fallback(config, state, paths, workspace_root, package_path, &current_exe, &result_file).await
+            trigger_install_fallback(
+                config,
+                state,
+                paths,
+                workspace_root,
+                package_path,
+                &current_exe,
+                &result_file,
+            )
+            .await
         }
         Err(e) => {
             // systemd-run binary not found — fall back to direct pkexec.
             warn!(error = %e, "systemd-run not available; falling back to direct pkexec");
-            trigger_install_fallback(config, state, paths, workspace_root, package_path, &current_exe, &result_file).await
+            trigger_install_fallback(
+                config,
+                state,
+                paths,
+                workspace_root,
+                package_path,
+                &current_exe,
+                &result_file,
+            )
+            .await
         }
     }
 }
@@ -1343,7 +1412,16 @@ async fn trigger_install_fallback(
         .context("Failed to launch pkexec for update installation")?;
     let status = output.status;
 
-    finalize_install_result(config, state, paths, workspace_root, status, &output.stdout, &output.stderr).await
+    finalize_install_result(
+        config,
+        state,
+        paths,
+        workspace_root,
+        status,
+        &output.stdout,
+        &output.stderr,
+    )
+    .await
 }
 
 /// Shared completion handler: updates state based on the install exit status.
@@ -1423,8 +1501,12 @@ fn check_install_completion(
 
     // 1. Check for the result sentinel file.
     if result_file.exists() {
-        let content = fs::read_to_string(&result_file)
-            .with_context(|| format!("Failed to read install result file: {}", result_file.display()))?;
+        let content = fs::read_to_string(&result_file).with_context(|| {
+            format!(
+                "Failed to read install result file: {}",
+                result_file.display()
+            )
+        })?;
 
         let (success, message) = if let Some(rest) = content.strip_prefix("success\n") {
             (true, rest.to_string())
@@ -1482,7 +1564,8 @@ fn check_install_completion(
             state.error_message = Some(
                 "Install process exited without writing a result. \
                  This usually means pkexec authentication was denied or the \
-                 installer crashed before completion.".to_string(),
+                 installer crashed before completion."
+                    .to_string(),
             );
             state.notified_events.clear();
             persist_state(paths, state)?;
@@ -1787,6 +1870,41 @@ mod tests {
         assert!(!installed_version_matches_candidate("0.109.0", "0.108.0"));
     }
 
+    #[test]
+    fn manual_check_clears_superseded_same_version_pending_update() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let mut state = PersistedState::new(true);
+        state.installed_version = "0.116.1".to_string();
+        state.candidate_version = Some("0.116.1".to_string());
+        state.status = UpdateStatus::ReadyToInstall;
+        state.port_candidate_sha = Some("old-port-build".to_string());
+        state.installed_port_sha = None;
+        state.artifact_paths.package_path = Some(
+            temp.path()
+                .join("cache/port-deb/factory-desktop_0.115.0_amd64.deb"),
+        );
+        state.error_message =
+            Some("Previous install attempt was interrupted before completion".to_string());
+        state
+            .notified_events
+            .insert("ready_to_install:0.116.1".to_string());
+
+        assert!(clear_superseded_pending_for_manual_check(
+            &mut state, &paths
+        )?);
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.port_candidate_sha, None);
+        assert_eq!(state.artifact_paths.package_path, None);
+        assert_eq!(state.error_message, None);
+        assert!(state.notified_events.is_empty());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn run_check_cycle_skips_when_update_is_already_pending() -> Result<()> {
         let temp = tempfile::tempdir()?;
@@ -1813,19 +1931,17 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_latest_droid_version_returns_latest_from_mock() -> Result<()> {
-        use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
+        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
 
         Mock::given(matchers::method("GET"))
             .and(matchers::path("@factory/cli-linux-x64"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({
-                    "name": "@factory/cli-linux-x64",
-                    "dist-tags": { "latest": "0.111.0" },
-                    "versions": {}
-                }),
-            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "name": "@factory/cli-linux-x64",
+                "dist-tags": { "latest": "0.111.0" },
+                "versions": {}
+            })))
             .mount(&server)
             .await;
 
@@ -1902,7 +2018,8 @@ mod tests {
         fs::write(
             &build_info_path,
             r#"{"upstreamDmg":{"sha256":"abc","version":"0.110.0"},"factoryVersion":"0.110.0"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let droid_version = installed_droid_version(&config);
         assert_eq!(droid_version, None);
     }
