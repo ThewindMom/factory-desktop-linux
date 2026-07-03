@@ -106,9 +106,8 @@ jobs:
       - name: Resolve Linux droid CLI
         run: |
           node dist/cli.js resolve-droid \
-            --factory-version "${{ needs.check-and-release.outputs.version }}" \
-            --output-dir "$RUNNER_TEMP/factory-droid"
-          echo "FACTORY_DROID_PATH=$RUNNER_TEMP/factory-droid/droid" >> "$GITHUB_ENV"
+            --factory-version "${{ needs.check-and-release.outputs.version }}"
+          echo "FACTORY_DROID_PATH=$GITHUB_WORKSPACE/work/droid/droid" >> "$GITHUB_ENV"
 
       - name: Build Rust updater
         run: cd updater && cargo build --release
