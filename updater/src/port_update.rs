@@ -77,10 +77,14 @@ pub struct DownloadedDeb {
 /// Returns `None` if no releases exist.
 async fn fetch_latest_release(
     client: &Client,
+    api_base_url: &str,
     owner: &str,
     repo: &str,
 ) -> Result<Option<GitHubRelease>> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
+    let url = format!(
+        "{}/repos/{owner}/{repo}/releases/latest",
+        api_base_url.trim_end_matches('/')
+    );
     let response = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
@@ -108,8 +112,17 @@ async fn fetch_latest_release(
 /// Uses `/repos/{owner}/{repo}/git/ref/tags/{tag}`. This reads the actual
 /// git ref, not the release's `target_commitish` (which may be a branch name
 /// or stale).
-async fn fetch_tag_sha(client: &Client, owner: &str, repo: &str, tag: &str) -> Result<String> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}/git/ref/tags/{tag}");
+async fn fetch_tag_sha(
+    client: &Client,
+    api_base_url: &str,
+    owner: &str,
+    repo: &str,
+    tag: &str,
+) -> Result<String> {
+    let url = format!(
+        "{}/repos/{owner}/{repo}/git/ref/tags/{tag}",
+        api_base_url.trim_end_matches('/')
+    );
     let response = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
@@ -135,16 +148,17 @@ async fn fetch_tag_sha(client: &Client, owner: &str, repo: &str, tag: &str) -> R
 /// or `None` if the installed build matches the latest release.
 pub async fn check_for_port_update(
     client: &Client,
+    api_base_url: &str,
     owner: &str,
     repo: &str,
     installed_port_sha: Option<&str>,
 ) -> Result<Option<PortUpdateCheck>> {
-    let Some(release) = fetch_latest_release(client, owner, repo).await? else {
+    let Some(release) = fetch_latest_release(client, api_base_url, owner, repo).await? else {
         return Ok(None);
     };
 
     let release_version = release_version_from_tag(&release.tag_name)?;
-    let release_sha = fetch_tag_sha(client, owner, repo, &release.tag_name).await?;
+    let release_sha = fetch_tag_sha(client, api_base_url, owner, repo, &release.tag_name).await?;
 
     // If the installed build SHA matches the release SHA, no update needed.
     if let Some(installed) = installed_port_sha {

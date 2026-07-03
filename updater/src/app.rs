@@ -260,6 +260,17 @@ fn update_install_is_pending(status: &UpdateStatus) -> bool {
     )
 }
 
+fn status_to_restore_after_check_failure(state: &PersistedState) -> UpdateStatus {
+    if state.status != UpdateStatus::CheckingUpstream {
+        return state.status.clone();
+    }
+    if state.candidate_version.is_some() {
+        UpdateStatus::Idle
+    } else {
+        UpdateStatus::Installed
+    }
+}
+
 async fn run_daemon(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -483,56 +494,54 @@ async fn run_check_cycle(
     let client = Client::builder().build()?;
 
     sync_runtime_state(config, state);
+    let status_before_check = status_to_restore_after_check_failure(state);
     state.status = UpdateStatus::CheckingUpstream;
     state.last_check_at = Some(Utc::now());
     state.error_message = None;
     persist_state(paths, state)?;
 
-    // Check for port build updates (new .deb on GitHub Releases) before
-    // checking upstream DMG. Port updates take priority — they include the
-    // latest patches AND the latest droid, so they're strictly newer.
-    if let Some(port_update) = port_update::check_for_port_update(
-        &client,
-        &config.github_owner,
-        &config.github_repo,
-        state.installed_port_sha.as_deref(),
-    )
-    .await?
-    {
-        info!(
-            release_sha = %port_update.release_sha,
-            "port build update detected"
-        );
-
-        if let (Some(deb_url), Some(deb_name)) =
-            (port_update.deb_url.as_ref(), port_update.deb_name.as_ref())
+    let result: Result<()> = async {
+        if let Some(port_update) = port_update::check_for_port_update(
+            &client,
+            &config.github_api_base_url,
+            &config.github_owner,
+            &config.github_repo,
+            state.installed_port_sha.as_deref(),
+        )
+        .await?
         {
-            set_status(state, paths, UpdateStatus::DownloadingDmg)?;
+            info!(
+                release_sha = %port_update.release_sha,
+                "port build update detected"
+            );
 
-            let deb_dir = config.workspace_root.join("port-deb");
-            let downloaded =
-                port_update::download_deb(&client, deb_url, &deb_dir, deb_name).await?;
+            if let (Some(deb_url), Some(deb_name)) =
+                (port_update.deb_url.as_ref(), port_update.deb_name.as_ref())
+            {
+                set_status(state, paths, UpdateStatus::DownloadingDmg)?;
 
-            rollback::record_current_package_as_known_good(state);
-            state.status = UpdateStatus::ReadyToInstall;
-            state.port_candidate_sha = Some(port_update.release_sha.clone());
-            state.artifact_paths.package_path = Some(downloaded.path);
-            state.candidate_version = Some(port_update.release_version.clone());
-            state.notified_events.clear();
-            state.save(&paths.state_file)?;
+                let deb_dir = config.workspace_root.join("port-deb");
+                let downloaded =
+                    port_update::download_deb(&client, deb_url, &deb_dir, deb_name).await?;
 
-            info!(deb = %deb_name, "port .deb downloaded and ready to install");
-            maybe_notify_update_ready(state, paths, config.notifications)?;
-            return Ok(());
+                rollback::record_current_package_as_known_good(state);
+                state.status = UpdateStatus::ReadyToInstall;
+                state.port_candidate_sha = Some(port_update.release_sha.clone());
+                state.artifact_paths.package_path = Some(downloaded.path);
+                state.candidate_version = Some(port_update.release_version.clone());
+                state.notified_events.clear();
+                state.save(&paths.state_file)?;
+
+                info!(deb = %deb_name, "port .deb downloaded and ready to install");
+                maybe_notify_update_ready(state, paths, config.notifications)?;
+                return Ok(());
+            }
+
+            info!(
+                "port build update detected but no .deb asset found; falling through to upstream check"
+            );
         }
 
-        // No .deb asset on the release — fall through to upstream check.
-        info!(
-            "port build update detected but no .deb asset found; falling through to upstream check"
-        );
-    }
-
-    let result: Result<()> = async {
         let metadata =
             upstream::fetch_remote_metadata(&client, &config.dmg_api_url_with_arch()).await?;
         let previous_headers_fingerprint = state.remote_headers_fingerprint.clone();
@@ -629,7 +638,18 @@ async fn run_check_cycle(
     .await;
 
     if let Err(error) = result {
-        mark_failed_and_persist(state, paths, error.to_string())?;
+        if state.status == UpdateStatus::CheckingUpstream {
+            state.status = status_before_check;
+            state.error_message = Some(error.to_string());
+            state
+                .notified_events
+                .retain(|event| !event.starts_with("build_failed:"));
+            persist_state(paths, state)?;
+            maybe_prune_workspace_cache(&config.workspace_root, state);
+            return Err(error);
+        } else {
+            mark_failed_and_persist(state, paths, error.to_string())?;
+        }
         maybe_prune_workspace_cache(&config.workspace_root, state);
         let _ = notify_failure(config, state, paths, &error);
         return Err(error);
@@ -1806,6 +1826,7 @@ mod tests {
         RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
             github_repo: "factory-desktop-linux".to_string(),
+            github_api_base_url: "https://api.github.com".to_string(),
             dmg_api_url: "https://example.com/api/desktop".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 1,
@@ -1823,6 +1844,7 @@ mod tests {
         let config = RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
             github_repo: "factory-desktop-linux".to_string(),
+            github_api_base_url: "https://api.github.com".to_string(),
             dmg_api_url: "https://example.com/api/desktop".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 1,
@@ -1868,6 +1890,18 @@ mod tests {
 
         assert!(installed_version_matches_candidate("0.108.0", "0.108.0"));
         assert!(!installed_version_matches_candidate("0.109.0", "0.108.0"));
+    }
+
+    #[test]
+    fn stale_checking_status_restores_to_installed_without_candidate() {
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::CheckingUpstream;
+        state.candidate_version = None;
+
+        assert_eq!(
+            status_to_restore_after_check_failure(&state),
+            UpdateStatus::Installed
+        );
     }
 
     #[test]
@@ -1926,6 +1960,47 @@ mod tests {
             assert_eq!(state.status, status);
             assert_eq!(state.last_check_at, None);
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_check_cycle_restores_status_when_port_update_check_fails() -> Result<()> {
+        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let server = MockServer::start().await;
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path(
+                "/repos/ThewindMom/factory-desktop-linux/releases/latest",
+            ))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "API rate limit exceeded"
+            })))
+            .mount(&server)
+            .await;
+
+        let mut config = test_config(temp.path());
+        config.github_api_base_url = server.uri();
+
+        let mut state = PersistedState::new(true);
+        state.installed_version = "0.121.0".to_string();
+        state.status = UpdateStatus::Installed;
+        state
+            .notified_events
+            .insert("build_failed:0.121.0".to_string());
+
+        let result = run_check_cycle(&config, &mut state, &paths).await;
+
+        assert!(result.is_err());
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert!(state
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("returned an error status")));
+        assert!(state.notified_events.is_empty());
         Ok(())
     }
 

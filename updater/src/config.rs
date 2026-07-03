@@ -7,6 +7,7 @@ use std::{fs, path::PathBuf};
 
 const SERVICE_NAME: &str = "factory-update-manager";
 const DEFAULT_DESKTOP_API: &str = "https://app.factory.ai/api/desktop";
+const DEFAULT_GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const DEFAULT_GITHUB_OWNER: &str = "ThewindMom";
 const DEFAULT_GITHUB_REPO: &str = "factory-desktop-linux";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,6 +31,8 @@ pub struct RuntimeConfig {
     /// this is `/opt/factory-desktop/update-builder`.
     pub builder_bundle_root: PathBuf,
     pub app_executable_path: PathBuf,
+    #[serde(default = "default_github_api_base_url")]
+    pub github_api_base_url: String,
     /// GitHub repository owner for port-build update checks.
     #[serde(default = "default_github_owner")]
     pub github_owner: String,
@@ -39,6 +42,10 @@ pub struct RuntimeConfig {
 }
 fn default_arch() -> String {
     "x64".to_string()
+}
+
+fn default_github_api_base_url() -> String {
+    DEFAULT_GITHUB_API_BASE_URL.to_string()
 }
 
 fn default_github_owner() -> String {
@@ -121,6 +128,7 @@ impl RuntimeConfig {
             workspace_root: paths.cache_dir.clone(),
             builder_bundle_root,
             app_executable_path: PathBuf::from("/opt/Factory/factory-desktop"),
+            github_api_base_url: default_github_api_base_url(),
             github_owner: default_github_owner(),
             github_repo: default_github_repo(),
         }
@@ -170,6 +178,7 @@ mod tests {
         assert_eq!(config.dmg_api_url, DEFAULT_DESKTOP_API);
         assert_eq!(config.arch, "x64");
         assert_eq!(config.check_interval_hours, 6);
+        assert_eq!(config.github_api_base_url, DEFAULT_GITHUB_API_BASE_URL);
         assert!(!config.auto_install_on_app_exit);
     }
 
@@ -178,6 +187,7 @@ mod tests {
         let config = RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
             github_repo: "factory-desktop-linux".to_string(),
+            github_api_base_url: DEFAULT_GITHUB_API_BASE_URL.to_string(),
             dmg_api_url: DEFAULT_DESKTOP_API.to_string(),
             arch: "arm64".to_string(),
             initial_check_delay_seconds: 30,
@@ -199,6 +209,7 @@ mod tests {
         let config = RuntimeConfig {
             github_owner: "ThewindMom".to_string(),
             github_repo: "factory-desktop-linux".to_string(),
+            github_api_base_url: DEFAULT_GITHUB_API_BASE_URL.to_string(),
             dmg_api_url: "https://app.factory.ai/api/desktop?architecture=x64".to_string(),
             arch: "x64".to_string(),
             initial_check_delay_seconds: 30,
