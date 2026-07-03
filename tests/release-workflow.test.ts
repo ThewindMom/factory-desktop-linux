@@ -43,6 +43,9 @@ describe("release automation contract", () => {
     expect(workflow).toContain("concurrency:");
     expect(workflow).toContain("group: release-${{ github.ref }}");
     expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).toContain("Resolve Linux droid CLI");
+    expect(workflow).toContain("node dist/cli.js resolve-droid");
+    expect(workflow).toContain('echo "FACTORY_DROID_PATH=$RUNNER_TEMP/factory-droid/droid"');
     expect(workflow).toContain("node dist/cli.js build-all");
     expect(workflow).toContain(
       '--factory-version "${{ needs.check-and-release.outputs.version }}"',
