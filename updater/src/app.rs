@@ -1140,6 +1140,7 @@ fn recover_interrupted_install(
             state.notified_events.clear();
             cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
             persist_state(paths, state)?;
+            maybe_relaunch_app_after_update(config);
             info!("recovered interrupted install state because the candidate version is already installed");
             return Ok(());
         }
