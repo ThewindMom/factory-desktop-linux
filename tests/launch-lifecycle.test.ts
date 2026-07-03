@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+
 /**
  * Tests for launch diagnostics and lifecycle harnesses.
  *

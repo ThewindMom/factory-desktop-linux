@@ -75,7 +75,7 @@ const OLD_CHIP_STYLE_CSS =
 const OLD_TOP_CHIP_STYLE_CSS =
   "position:fixed;right:16px;top:44px;z-index:2147483647;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 9px;background:rgba(20,20,20,.86);color:rgba(255,255,255,.78);font:11px/1.2 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;backdrop-filter:blur(8px);box-shadow:0 6px 18px rgba(0,0,0,.22);pointer-events:none;user-select:none;";
 const CHIP_STYLE_CSS =
-  "position:fixed;right:28px;top:38px;z-index:2147483647;min-width:220px;border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:10px 12px;background:rgba(18,18,18,.94);color:rgba(255,255,255,.9);font:12px/1.45 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;font-variant-numeric:tabular-nums;text-align:left;backdrop-filter:blur(12px);box-shadow:0 12px 32px rgba(0,0,0,.34),0 1px 0 rgba(255,255,255,.06) inset;pointer-events:auto;user-select:none;";
+  "position:fixed;left:16px;top:40px;z-index:2147483647;min-width:220px;border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:10px 12px;background:rgba(18,18,18,.94);color:rgba(255,255,255,.9);font:12px/1.45 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;font-variant-numeric:tabular-nums;text-align:left;backdrop-filter:blur(12px);box-shadow:0 12px 32px rgba(0,0,0,.34),0 1px 0 rgba(255,255,255,.06) inset;pointer-events:auto;user-select:none;";
 const CHIP_CLOSE_BUTTON_CSS =
   "position:absolute;right:6px;top:5px;width:22px;height:22px;border:0;border-radius:999px;background:transparent;color:rgba(255,255,255,.62);font:16px/22px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;cursor:pointer;padding:0;";
 const CHIP_UPDATE_BUTTON_CSS =
@@ -195,15 +195,15 @@ function buildInjectedVisibleVersionChip(
     `let headline=ready?"Factory Desktop update ready":preparing?"Preparing Factory Desktop update":"Factory Desktop update available";` +
     `const parts=[headline,"Current "+v,"Latest "+cv];` +
     `if(ready)parts.push("Install when Factory is closed");else if(preparing)parts.push("Preparing update package");else parts.push("Run update check to prepare it");` +
-    `const command=ready?"factory-update-manager install-ready":"factory-update-manager check-now";` +
-    `const payload={text:parts,command,cta:ready?"Copy install command":"Copy update command"};` +
+    `const action=ready?"install-ready":"check-now";` +
+    `const payload={text:parts,action,cta:"Update"};` +
     `const js="(()=>{const d="+JSON.stringify(payload)+";if(sessionStorage.getItem('factory-linux-version-panel-hidden')==='1')return;let e=document.getElementById('factory-linux-version-chip');` +
     `if(!e){e=document.createElement('div');e.id='factory-linux-version-chip';e.setAttribute('role','status');e.setAttribute('aria-label','Factory Desktop update status');e.style.cssText='${CHIP_STYLE_CSS}';` +
     `const c=document.createElement('button');c.type='button';c.setAttribute('aria-label','Hide update status');c.textContent='×';c.style.cssText='${CHIP_CLOSE_BUTTON_CSS}';c.onclick=()=>{sessionStorage.setItem('factory-linux-version-panel-hidden','1');e.remove()};e.appendChild(c);` +
     `const body=document.createElement('div');body.id='factory-linux-version-chip-body';body.style.cssText='padding-right:18px;white-space:pre-line;text-wrap:balance;';e.appendChild(body);` +
-    `const btn=document.createElement('button');btn.type='button';btn.id='factory-linux-version-update';btn.style.cssText='${CHIP_UPDATE_BUTTON_CSS}';btn.textContent=d.cta||'Copy update command';btn.onclick=async()=>{try{await navigator.clipboard.writeText(d.command);btn.textContent='Copied'}catch(_){btn.textContent=d.command}};e.appendChild(btn);document.body.appendChild(e)}` +
-    `const body=e.querySelector('#factory-linux-version-chip-body');if(body)body.textContent=d.text.join('\\\\n');const code=e.querySelector('#factory-linux-version-command');if(code)code.remove();const btn=e.querySelector('#factory-linux-version-update');if(btn){btn.style.display=d.command?'block':'none';if(d.command)btn.textContent=d.cta||'Copy update command'}})()";` +
-    `${windowRef}.webContents.executeJavaScript(js,true).catch(()=>{})` +
+    `const btn=document.createElement('button');btn.type='button';btn.id='factory-linux-version-update';btn.style.cssText='${CHIP_UPDATE_BUTTON_CSS}';btn.textContent=d.cta||'Update';btn.onclick=()=>{window.__factoryLinuxUpdateRequest=d.action;btn.textContent='Starting...'};e.appendChild(btn);document.body.appendChild(e)}` +
+    `const body=e.querySelector('#factory-linux-version-chip-body');if(body)body.textContent=d.text.join('\\\\n');const code=e.querySelector('#factory-linux-version-command');if(code)code.remove();const btn=e.querySelector('#factory-linux-version-update');if(btn){btn.style.display=d.action?'block':'none';if(d.action)btn.textContent=d.cta||'Update'}const req=window.__factoryLinuxUpdateRequest||'';window.__factoryLinuxUpdateRequest='';return req})()";` +
+    `${windowRef}.webContents.executeJavaScript(js,true).then((req)=>{if(req==="install-ready"||req==="check-now"){try{require("child_process").spawn("factory-update-manager",[req],{detached:true,stdio:"ignore"}).unref()}catch(e){}}}).catch(()=>{})` +
     `}catch(e){}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const t=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=t;${windowRef}.on("closed",()=>{clearInterval(t)})}})()})`
   );
 }

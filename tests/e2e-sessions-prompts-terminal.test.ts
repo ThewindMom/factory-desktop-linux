@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+
 /**
  * E2E validation harness for sessions, prompts, workspace picker/file browsing,
  * terminal command execution and blocked states, prompt errors/cancellation,

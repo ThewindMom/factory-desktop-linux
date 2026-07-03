@@ -176,15 +176,18 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).not.toContain("System Droid CLI not found");
     expect(patchedContent).not.toContain("System daemon running");
     expect(patchedContent).not.toContain("System daemon not running");
-    expect(patchedContent).toContain("top:38px");
+    expect(patchedContent).toContain("left:16px");
+    expect(patchedContent).toContain("top:40px");
     expect(patchedContent).toContain("min-width:220px");
     expect(patchedContent).toContain("white-space:pre-line");
     expect(patchedContent).toContain("factory-linux-version-update");
-    expect(patchedContent).toContain("Copy update command");
-    expect(patchedContent).toContain("Copy install command");
+    expect(patchedContent).toContain("Update");
     expect(patchedContent).toContain("Hide update status");
     expect(patchedContent).toContain("sessionStorage");
-    expect(patchedContent).toContain("navigator.clipboard.writeText");
+    expect(patchedContent).toContain("__factoryLinuxUpdateRequest");
+    expect(patchedContent).toContain("child_process");
+    expect(patchedContent).toContain("spawn");
+    expect(patchedContent).not.toContain("navigator.clipboard.writeText");
     expect(patchedContent).toContain(String.raw`body.textContent=d.text.join('\\n')`);
     expect(patchedContent).not.toContain(String.raw`body.textContent=d.text.join('\n')`);
     expect(patchedContent).toContain("const render=()=>{try{");
@@ -216,7 +219,8 @@ describe("patchAboutPanel", () => {
         "Latest 0.117.0",
       ],
       command: "factory-update-manager install-ready",
-      cta: "Copy install command",
+      action: "install-ready",
+      cta: "Update",
     });
     expect(() => Function("d", rendererJs)).not.toThrow();
     const separatorLiteral = rendererJs.match(/d\.text\.join\(([^)]*)\)/)?.[1];
@@ -326,7 +330,8 @@ describe("patchAboutPanel", () => {
       .toString("utf-8");
 
     expect(migratedContent).not.toContain("bottom:10px");
-    expect(migratedContent).toContain("top:38px");
+    expect(migratedContent).toContain("left:16px");
+    expect(migratedContent).toContain("top:40px");
     expect(migratedContent).toContain("min-width:220px");
     expect(migratedContent).toContain("Factory Desktop update available");
     expect(migratedContent).not.toContain("System Droid CLI");
@@ -340,7 +345,8 @@ describe("patchAboutPanel", () => {
     expect(migratedContent).toContain("const t=setInterval(render,5000)");
     expect(migratedContent).toContain('_t.on("closed",()=>{clearInterval(t)})');
     expect(migratedTopContent).not.toContain("top:44px");
-    expect(migratedTopContent).toContain("top:38px");
+    expect(migratedTopContent).toContain("left:16px");
+    expect(migratedTopContent).toContain("top:40px");
     expect(migratedTopContent).toContain("min-width:220px");
     expect(migratedTopContent).toContain("Factory Desktop update available");
     expect(migratedTopContent).not.toContain("System Droid CLI");

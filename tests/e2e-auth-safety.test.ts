@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+
 /**
  * E2E validation harness for first-run unauthenticated UX, login initiation,
  * deep-link callback routing, protected unauthenticated states, and

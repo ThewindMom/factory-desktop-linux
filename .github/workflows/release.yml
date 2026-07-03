@@ -23,6 +23,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   check-and-release:
     runs-on: ubuntu-22.04
@@ -104,7 +108,7 @@ jobs:
 
       - name: Build Linux app and package
         run: |
-          node dist/cli.js build-all --targets deb,rpm,appimage
+          node dist/cli.js build-all --factory-version "${{ needs.check-and-release.outputs.version }}" --targets deb,rpm,appimage
 
       - name: Verify .deb was produced
         run: |
