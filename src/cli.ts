@@ -2910,6 +2910,7 @@ program
 
       const {
         assembleLinuxRuntime,
+        formatAssemblyResult,
         validateRuntimeLayout,
         validateDroidBinary,
         validateSharedLibraries,
@@ -2925,6 +2926,7 @@ program
       });
 
       if (!assembleResult.success) {
+        process.stderr.write(`\n${formatAssemblyResult(assembleResult)}\n`);
         process.stderr.write(`Runtime assembly failed.\n`);
         process.exit(1);
       }
@@ -2952,7 +2954,7 @@ program
             systemDroidVersion: systemDroid.version ?? null,
             electronVersion: options.electronVersion,
             buildTimestamp: new Date().toISOString(),
-            portBuildSha: process.env.GITHUB_SHA ?? null,
+            portBuildSha: process.env.GITHUB_SHA ?? process.env.FACTORY_PORT_BUILD_SHA ?? null,
           },
           null,
           2
@@ -3003,7 +3005,7 @@ program
         // embedded inside the next package's update-builder payload.
         const builderStagingDir = path.join(factoryLinuxDir, "update-builder");
         fs.mkdirSync(builderStagingDir, { recursive: true });
-        for (const dir of ["dist", "node_modules", "src", "assets"]) {
+        for (const dir of ["dist", "node_modules", "src", "assets", "packaging"]) {
           const srcDir = path.join(projectRoot, dir);
           if (fs.existsSync(srcDir)) {
             fs.cpSync(srcDir, path.join(builderStagingDir, dir), {

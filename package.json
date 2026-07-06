@@ -2,6 +2,7 @@
   "name": "factory-droid-desktop-linux-port",
   "version": "0.1.0",
   "description": "Unofficial Linux port builder for Factory Droid Desktop",
+  "homepage": "https://github.com/ThewindMom/factory-desktop-linux",
   "author": {
     "name": "ThewindMom",
     "email": "thewindmom@users.noreply.github.com"

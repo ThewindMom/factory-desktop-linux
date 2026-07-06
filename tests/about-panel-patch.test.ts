@@ -182,6 +182,10 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).toContain("white-space:pre-line");
     expect(patchedContent).toContain("factory-linux-version-update");
     expect(patchedContent).toContain("Update");
+    expect(patchedContent).toContain("Factory Desktop update failed");
+    expect(patchedContent).toContain("Could not prepare update");
+    expect(patchedContent).toContain('cta:failed?"Retry":"Update"');
+    expect(patchedContent).toContain("s.error_message");
     expect(patchedContent).toContain("Hide update status");
     expect(patchedContent).toContain("sessionStorage");
     expect(patchedContent).toContain("__factoryLinuxUpdateRequest");

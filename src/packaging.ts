@@ -621,6 +621,7 @@ export function createElectronBuilderConfig(options: PackageBuildOptions, projec
     extraMetadata: {
       name: options.execName,
       version: options.factoryVersion,
+      homepage: "https://github.com/ThewindMom/factory-desktop-linux",
     },
     linux: {
       executableName: options.execName,

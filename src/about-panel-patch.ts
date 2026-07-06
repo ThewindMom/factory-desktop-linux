@@ -163,10 +163,10 @@ function buildInjectedDetail(appGetVersionRef: string): string {
     // idle = no update found; installed = post-success steady state.
     `if(s.status){` +
     `const up=["update_detected","downloading_dmg","preparing_workspace","building_package","ready_to_install","waiting_for_app_exit","installing"],cv=s.candidate_version;` +
-    `if(cv&&cv!==v)d+="\\n\\nUpdate available: "+cv;` +
+    `if(s.status==="failed")d+="\\n\\nUpdate check failed"+(s.error_message?": "+s.error_message:"");` +
+    `else if(cv&&cv!==v)d+="\\n\\nUpdate available: "+cv;` +
     `else if(cv===v||s.status==="idle"||s.status==="installed")d+="\\n\\nUpdate status: up to date";` +
     `else if(up.includes(s.status))d+="\\n\\nUpdate available: pending";` +
-    `else if(s.status==="failed")d+="\\n\\nUpdate check failed";` +
     `else if(s.last_check_at)d+="\\n\\nLast update check: "+new Date(s.last_check_at).toLocaleString();` +
     `}` +
     `return d}` +
@@ -192,13 +192,14 @@ function buildInjectedVisibleVersionChip(
     `const v=b.factoryVersion||${appGetVersionRef},cv=s.candidate_version;` +
     `const ready=s.status==="ready_to_install"||s.status==="waiting_for_app_exit";` +
     `const preparing=["downloading_dmg","preparing_workspace","building_package","installing"].includes(s.status);` +
+    `const failed=s.status==="failed";` +
     `const desktopUpdate=!!(cv&&cv!==v);` +
     `if(!desktopUpdate){const js="(()=>{const e=document.getElementById('factory-linux-version-chip');if(e)e.remove()})()";${windowRef}.webContents.executeJavaScript(js,true).catch(()=>{});return}` +
-    `let headline=ready?"Factory Desktop update ready":preparing?"Preparing Factory Desktop update":"Factory Desktop update available";` +
+    `let headline=failed?"Factory Desktop update failed":ready?"Factory Desktop update ready":preparing?"Preparing Factory Desktop update":"Factory Desktop update available";` +
     `const parts=[headline,"Current "+v,"Latest "+cv];` +
-    `if(ready)parts.push("Install when Factory is closed");else if(preparing)parts.push("Preparing update package");else parts.push("Run update check to prepare it");` +
+    `if(failed){parts.push("Could not prepare update");if(s.error_message)parts.push(String(s.error_message).slice(0,160))}else if(ready)parts.push("Install when Factory is closed");else if(preparing)parts.push("Preparing update package");else parts.push("Run update check to prepare it");` +
     `const action=ready?"install-ready":"check-now";` +
-    `const payload={text:parts,action,cta:"Update"};` +
+    `const payload={text:parts,action,cta:failed?"Retry":"Update"};` +
     `const js="(()=>{const d="+JSON.stringify(payload)+";if(sessionStorage.getItem('factory-linux-version-panel-hidden')==='1')return;let e=document.getElementById('factory-linux-version-chip');` +
     `if(!e){e=document.createElement('div');e.id='factory-linux-version-chip';e.setAttribute('role','status');e.setAttribute('aria-label','Factory Desktop update status');e.style.cssText='${CHIP_STYLE_CSS}';` +
     `const c=document.createElement('button');c.type='button';c.setAttribute('aria-label','Hide update status');c.textContent='×';c.style.cssText='${CHIP_CLOSE_BUTTON_CSS}';c.onclick=()=>{sessionStorage.setItem('factory-linux-version-panel-hidden','1');e.remove()};e.appendChild(c);` +

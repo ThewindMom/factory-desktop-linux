@@ -951,6 +951,8 @@ describe("packaging", () => {
         process.cwd()
       );
       const deb = config.deb as Record<string, unknown>;
+      const extraMetadata = config.extraMetadata as Record<string, unknown>;
+      expect(extraMetadata.homepage).toBe("https://github.com/ThewindMom/factory-desktop-linux");
       expect(deb.afterInstall).toBe("packaging/linux/factory-desktop.postinst");
       expect(deb.afterRemove).toBe("packaging/linux/factory-desktop.postrm");
       const extraFiles = config.extraFiles as Array<{ from: string; to: string }>;

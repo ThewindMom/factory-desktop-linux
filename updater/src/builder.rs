@@ -106,6 +106,9 @@ pub async fn build_update_from(
         .env("FACTORY_DIST_DIR", &workspace.dist_dir)
         .env("PATH", &build_path)
         .current_dir(&workspace.bundle_dir);
+    if let Some(installed_port_sha) = state.installed_port_sha.as_deref() {
+        build.env("FACTORY_PORT_BUILD_SHA", installed_port_sha);
+    }
 
     run_and_log(&mut build, &workspace.build_log)
         .await

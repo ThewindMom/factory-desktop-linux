@@ -52,4 +52,18 @@ describe("release automation contract", () => {
     );
     expect(workflow).not.toContain("node dist/cli.js build-all --targets");
   });
+
+  it("stages packaging scripts into the updater builder bundle", () => {
+    const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
+
+    expect(cli).toContain('for (const dir of ["dist", "node_modules", "src", "assets", "packaging"])');
+  });
+
+  it("preserves the installed port SHA during updater-driven rebuilds", () => {
+    const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
+    const builder = fs.readFileSync(path.join(repoRoot, "updater", "src", "builder.rs"), "utf-8");
+
+    expect(cli).toContain("process.env.GITHUB_SHA ?? process.env.FACTORY_PORT_BUILD_SHA ?? null");
+    expect(builder).toContain('build.env("FACTORY_PORT_BUILD_SHA", installed_port_sha)');
+  });
 });
