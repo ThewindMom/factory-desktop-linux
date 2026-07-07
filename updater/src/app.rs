@@ -527,6 +527,11 @@ async fn run_check_cycle(
     paths: &RuntimePaths,
 ) -> Result<()> {
     if update_install_is_pending(&state.status) {
+        match refresh_superseded_pending_port_update(config, state, paths).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => warn!(?error, "pending port update refresh check failed"),
+        }
         info!("skipping upstream check because an update is already pending");
         return Ok(());
     }
@@ -702,6 +707,72 @@ async fn run_check_cycle(
     }
 
     Ok(())
+}
+
+async fn refresh_superseded_pending_port_update(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<bool> {
+    if !matches!(
+        state.status,
+        UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit
+    ) {
+        return Ok(false);
+    }
+
+    let Some(pending_port_sha) = state.port_candidate_sha.clone() else {
+        return Ok(false);
+    };
+
+    sync_runtime_state(config, state);
+
+    let client = Client::builder().build()?;
+    let Some(port_update) = port_update::check_for_port_update(
+        &client,
+        &config.github_api_base_url,
+        &config.github_owner,
+        &config.github_repo,
+        state.installed_port_sha.as_deref(),
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+
+    if port_update.release_sha == pending_port_sha {
+        return Ok(false);
+    }
+
+    let (Some(deb_url), Some(deb_name)) =
+        (port_update.deb_url.as_ref(), port_update.deb_name.as_ref())
+    else {
+        return Ok(false);
+    };
+
+    info!(
+        old_release_sha = %pending_port_sha,
+        new_release_sha = %port_update.release_sha,
+        "refreshing superseded pending port update"
+    );
+
+    set_status(state, paths, UpdateStatus::DownloadingDmg)?;
+    let deb_dir = config.workspace_root.join("port-deb");
+    let downloaded = port_update::download_deb(&client, deb_url, &deb_dir, deb_name).await?;
+
+    rollback::record_current_package_as_known_good(state);
+    state.status = UpdateStatus::ReadyToInstall;
+    state.waiting_for_app_exit_auto_install = false;
+    state.port_candidate_sha = Some(port_update.release_sha);
+    state.artifact_paths.package_path = Some(downloaded.path);
+    state.candidate_version = Some(port_update.release_version);
+    state.error_message = None;
+    state.notified_events.clear();
+    state.save(&paths.state_file)?;
+
+    info!(deb = %deb_name, "refreshed pending port .deb");
+    maybe_notify_update_ready(state, paths, config.notifications)?;
+    Ok(true)
 }
 
 async fn reconcile_pending_install(
@@ -2123,6 +2194,90 @@ mod tests {
             assert_eq!(state.status, status);
             assert_eq!(state.last_check_at, None);
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_check_cycle_refreshes_superseded_pending_port_deb() -> Result<()> {
+        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let server = MockServer::start().await;
+        let deb_name = "factory-desktop_0.121.1_amd64.deb";
+        let deb_path = format!("/download/{deb_name}");
+        let deb_url = format!("{}{}", server.uri(), deb_path);
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path(
+                "/repos/ThewindMom/factory-desktop-linux/releases/latest",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "tag_name": "v0.121.1",
+                "assets": [{
+                    "name": deb_name,
+                    "browser_download_url": deb_url,
+                    "size": 11
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path(
+                "/repos/ThewindMom/factory-desktop-linux/git/ref/tags/v0.121.1",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "object": { "sha": "new-port-build-sha" }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path(deb_path.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes("new package"))
+            .mount(&server)
+            .await;
+
+        let mut config = test_config(temp.path());
+        config.github_api_base_url = server.uri();
+
+        let old_package_path = temp.path().join("old/factory-desktop_0.121.1_amd64.deb");
+        fs::create_dir_all(old_package_path.parent().expect("old package has parent"))?;
+        fs::write(&old_package_path, b"old package")?;
+
+        let mut state = PersistedState::new(false);
+        state.installed_version = "0.121.0".to_string();
+        state.installed_port_sha = Some("installed-port-build-sha".to_string());
+        state.candidate_version = Some("0.121.1".to_string());
+        state.port_candidate_sha = Some("old-port-build-sha".to_string());
+        state.status = UpdateStatus::WaitingForAppExit;
+        state.waiting_for_app_exit_auto_install = true;
+        state.artifact_paths.package_path = Some(old_package_path);
+        state.error_message = Some("stale pending install".to_string());
+
+        run_check_cycle(&config, &mut state, &paths).await?;
+
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(state.candidate_version.as_deref(), Some("0.121.1"));
+        assert_eq!(
+            state.port_candidate_sha.as_deref(),
+            Some("new-port-build-sha")
+        );
+        assert!(!state.waiting_for_app_exit_auto_install);
+        assert_eq!(state.error_message, None);
+        let refreshed_path = state
+            .artifact_paths
+            .package_path
+            .as_ref()
+            .expect("refreshed package path is recorded");
+        assert_eq!(
+            refreshed_path.file_name().and_then(|name| name.to_str()),
+            Some(deb_name)
+        );
+        assert_eq!(fs::read(refreshed_path)?, b"new package");
         Ok(())
     }
 
