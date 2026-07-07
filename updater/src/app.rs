@@ -23,6 +23,10 @@ use tracing::{error, info, warn};
 
 const RECONCILE_INTERVAL_SECONDS: u64 = 15;
 const DISABLE_RELAUNCH_ENV: &str = "FACTORY_UPDATE_MANAGER_DISABLE_RELAUNCH";
+const INSTALL_READY_EXIT_WAIT_MS_ENV: &str = "FACTORY_UPDATE_MANAGER_INSTALL_READY_EXIT_WAIT_MS";
+const INSTALL_READY_EXIT_POLL_MS_ENV: &str = "FACTORY_UPDATE_MANAGER_INSTALL_READY_EXIT_POLL_MS";
+const DEFAULT_INSTALL_READY_EXIT_WAIT_MS: u64 = 120_000;
+const DEFAULT_INSTALL_READY_EXIT_POLL_MS: u64 = 250;
 const POLKIT_AUTH_AGENT_PROCESS_TOKENS: &[&str] = &[
     "budgie-polkit",
     "cinnamon-polkit",
@@ -115,6 +119,46 @@ fn persist_if_changed(
 
 fn effective_auto_install(_config: &RuntimeConfig) -> bool {
     false
+}
+
+fn duration_from_env_ms(var: &str, default_ms: u64) -> Duration {
+    std::env::var(var)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_millis(default_ms))
+}
+
+async fn wait_for_app_exit(config: &RuntimeConfig) -> Result<bool> {
+    let timeout = duration_from_env_ms(
+        INSTALL_READY_EXIT_WAIT_MS_ENV,
+        DEFAULT_INSTALL_READY_EXIT_WAIT_MS,
+    );
+    let poll = duration_from_env_ms(
+        INSTALL_READY_EXIT_POLL_MS_ENV,
+        DEFAULT_INSTALL_READY_EXIT_POLL_MS,
+    );
+
+    if !liveness::is_app_running(config)? {
+        return Ok(true);
+    }
+    if timeout.is_zero() {
+        return Ok(false);
+    }
+
+    let deadline = time::Instant::now() + timeout;
+    loop {
+        let now = time::Instant::now();
+        if now >= deadline {
+            return Ok(!liveness::is_app_running(config)?);
+        }
+
+        let remaining = deadline.saturating_duration_since(now);
+        time::sleep(poll.min(remaining)).await;
+        if !liveness::is_app_running(config)? {
+            return Ok(true);
+        }
+    }
 }
 
 fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
@@ -879,7 +923,11 @@ async fn run_install_ready(
             "Factory Desktop will install the update after it closes.",
         );
         println!("Factory Desktop is running. The update will install after it closes.");
-        return Ok(());
+        if !wait_for_app_exit(config).await? {
+            return Ok(());
+        }
+        info!("Factory Desktop exited; launching ready update install");
+        println!("Factory Desktop exited; installing update.");
     }
 
     clear_install_auth_required_event(state, paths)?;
@@ -1985,12 +2033,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn install_ready_while_app_is_running_waits_for_exit() -> Result<()> {
+    async fn install_ready_continues_after_running_app_exits() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
         let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
             "FACTORY_UPDATE_MANAGER_ASSUME_POLKIT_AGENT",
+            "FACTORY_UPDATE_MANAGER_INSTALL_READY_EXIT_WAIT_MS",
+            "FACTORY_UPDATE_MANAGER_INSTALL_READY_EXIT_POLL_MS",
+            "PATH",
         ]);
         std::env::set_var("FACTORY_UPDATE_MANAGER_ASSUME_POLKIT_AGENT", "1");
+        std::env::set_var("FACTORY_UPDATE_MANAGER_INSTALL_READY_EXIT_WAIT_MS", "2000");
+        std::env::set_var("FACTORY_UPDATE_MANAGER_INSTALL_READY_EXIT_POLL_MS", "25");
 
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
@@ -1998,8 +2051,41 @@ mod tests {
         let package_path = temp.path().join("factory-desktop_0.122.0_amd64.deb");
         fs::write(&package_path, b"mock package")?;
 
+        let fake_bin = temp.path().join("bin");
+        fs::create_dir_all(&fake_bin)?;
+        let fake_systemd_run = fake_bin.join("systemd-run");
+        let fake_systemd_run_log = temp.path().join("systemd-run.args");
+        fs::write(
+            &fake_systemd_run,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 0\n",
+                fake_systemd_run_log.display()
+            ),
+        )?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&fake_systemd_run, fs::Permissions::from_mode(0o755))?;
+        }
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let new_path = std::env::join_paths(
+            std::iter::once(fake_bin.clone()).chain(std::env::split_paths(&old_path)),
+        )?;
+        std::env::set_var("PATH", new_path);
+
+        let app_executable = temp.path().join("factory-test-app");
+        fs::copy("/usr/bin/sleep", &app_executable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&app_executable, fs::Permissions::from_mode(0o755))?;
+        }
+        let mut app_process = std::process::Command::new(&app_executable)
+            .arg("0.2")
+            .spawn()?;
+
         let mut config = test_config(temp.path());
-        config.app_executable_path = std::env::current_exe()?;
+        config.app_executable_path = app_executable;
 
         let mut state = PersistedState::new(false);
         state.status = UpdateStatus::ReadyToInstall;
@@ -2008,9 +2094,11 @@ mod tests {
         state.artifact_paths.package_path = Some(package_path);
 
         run_install_ready(&config, &mut state, &paths).await?;
+        let _ = app_process.wait();
 
-        assert_eq!(state.status, UpdateStatus::WaitingForAppExit);
-        assert!(state.waiting_for_app_exit_auto_install);
+        assert_eq!(state.status, UpdateStatus::Installing);
+        assert!(!state.waiting_for_app_exit_auto_install);
+        assert!(fake_systemd_run_log.exists());
         Ok(())
     }
 
