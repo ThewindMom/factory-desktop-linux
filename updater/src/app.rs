@@ -1165,16 +1165,19 @@ fn complete_pending_install_if_already_installed(
 
     // Don't clear a pending port update if the port SHA differs — the
     // version matches but the port build has new patches/code.
-    if state.port_candidate_sha.is_some() && state.port_candidate_sha != state.installed_port_sha {
-        return Ok(false);
-    }
-
     let candidate_is_installed =
         installed_version_matches_candidate(&state.installed_version, &candidate_version);
+    if candidate_is_installed
+        && state.port_candidate_sha.is_some()
+        && state.port_candidate_sha != state.installed_port_sha
+    {
+        return Ok(false);
+    }
 
     state.status = UpdateStatus::Installed;
     state.waiting_for_app_exit_auto_install = false;
     state.candidate_version = None;
+    state.port_candidate_sha = None;
     if !candidate_is_installed {
         state.artifact_paths.package_path = None;
     }
@@ -2103,6 +2106,66 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn status_clears_ready_update_when_installed_version_is_newer_than_candidate() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let mut state = PersistedState::new(false);
+        state.installed_version = "0.124.1".to_string();
+        state.candidate_version = Some("0.124.0".to_string());
+        state.status = UpdateStatus::ReadyToInstall;
+        state.port_candidate_sha = Some("older-port-build".to_string());
+        state.installed_port_sha = Some("newer-port-build".to_string());
+        state.artifact_paths.package_path = Some(
+            temp.path()
+                .join("cache/port-deb/factory-desktop_0.124.0_amd64.deb"),
+        );
+        state
+            .notified_events
+            .insert("ready_to_install:0.124.0".to_string());
+
+        assert!(complete_pending_install_if_already_installed(
+            &mut state, &paths
+        )?);
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.port_candidate_sha, None);
+        assert_eq!(state.artifact_paths.package_path, None);
+        assert!(state.notified_events.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn status_keeps_ready_update_when_candidate_is_same_version_with_new_port_sha() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let package_path = temp
+            .path()
+            .join("cache/port-deb/factory-desktop_0.124.1_amd64.deb");
+        let mut state = PersistedState::new(false);
+        state.installed_version = "0.124.1".to_string();
+        state.candidate_version = Some("0.124.1".to_string());
+        state.status = UpdateStatus::ReadyToInstall;
+        state.port_candidate_sha = Some("next-port-build".to_string());
+        state.installed_port_sha = Some("current-port-build".to_string());
+        state.artifact_paths.package_path = Some(package_path.clone());
+
+        assert!(!complete_pending_install_if_already_installed(
+            &mut state, &paths
+        )?);
+
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(state.candidate_version.as_deref(), Some("0.124.1"));
+        assert_eq!(state.port_candidate_sha.as_deref(), Some("next-port-build"));
+        assert_eq!(state.artifact_paths.package_path, Some(package_path));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn install_ready_continues_after_running_app_exits() -> Result<()> {
         let _env_guard = crate::test_util::env_lock();
@@ -2119,7 +2182,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
-        let package_path = temp.path().join("factory-desktop_0.122.0_amd64.deb");
+        let package_path = temp.path().join("factory-desktop_9999.0.0_amd64.deb");
         fs::write(&package_path, b"mock package")?;
 
         let fake_bin = temp.path().join("bin");
@@ -2161,7 +2224,7 @@ mod tests {
         let mut state = PersistedState::new(false);
         state.status = UpdateStatus::ReadyToInstall;
         state.installed_version = "0.121.0".to_string();
-        state.candidate_version = Some("0.122.0".to_string());
+        state.candidate_version = Some("9999.0.0".to_string());
         state.artifact_paths.package_path = Some(package_path);
 
         run_install_ready(&config, &mut state, &paths).await?;
