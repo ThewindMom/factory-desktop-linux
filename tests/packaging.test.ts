@@ -964,5 +964,17 @@ describe("packaging", () => {
         ])
       );
     });
+
+    test("postinst replaces stale update-builder before copying staged builder", () => {
+      const content = fs.readFileSync(
+        "packaging/linux/factory-desktop.postinst",
+        "utf8"
+      );
+
+      expect(content).toContain("rm -rf /opt/factory-desktop/update-builder");
+      expect(content.indexOf("rm -rf /opt/factory-desktop/update-builder")).toBeLessThan(
+        content.indexOf('cp -r "$BUILDER_STAGED" /opt/factory-desktop/update-builder')
+      );
+    });
   });
 });

@@ -50,8 +50,9 @@ pub async fn build_update(
     candidate_version: &str,
     dmg_path: &Path,
 ) -> Result<BuildArtifacts> {
+    let bundle_source = resolve_builder_bundle_source(config);
     build_update_from(
-        &config.builder_bundle_root,
+        &bundle_source,
         config,
         state,
         paths,
@@ -81,7 +82,7 @@ pub async fn build_update_from(
     state.status = UpdateStatus::BuildingPackage;
     state.save(&paths.state_file)?;
 
-    let build_path = build_command_path(&config.builder_bundle_root);
+    let build_path = build_command_path(bundle_source);
 
     // Run: node dist/cli.js build-all --dmg <path> --targets deb
     //
@@ -89,7 +90,7 @@ pub async fn build_update_from(
     // FACTORY_DIST_DIR env vars (via resolveDirs) to redirect all outputs
     // into the per-candidate workspace. This keeps the builder checkout clean
     // and lets find_package_in locate the produced .deb.
-    let node_bin = resolve_node_binary(&config.builder_bundle_root, &build_path);
+    let node_bin = resolve_node_binary(bundle_source, &build_path);
 
     let mut build = Command::new(node_bin);
     build
@@ -235,6 +236,46 @@ fn copy_builder_bundle(source_root: &Path, destination_root: &Path) -> Result<()
     }
 
     Ok(())
+}
+
+fn resolve_builder_bundle_source(config: &RuntimeConfig) -> PathBuf {
+    if builder_bundle_is_complete(&config.builder_bundle_root) {
+        return config.builder_bundle_root.clone();
+    }
+
+    if let Some(app_adjacent_bundle) = app_adjacent_builder_bundle(&config.app_executable_path) {
+        if builder_bundle_is_complete(&app_adjacent_bundle) {
+            return app_adjacent_bundle;
+        }
+    }
+
+    if let Some(repository_bundle) = repository_builder_bundle() {
+        if builder_bundle_is_complete(&repository_bundle) {
+            return repository_bundle;
+        }
+    }
+
+    config.builder_bundle_root.clone()
+}
+
+fn app_adjacent_builder_bundle(app_executable_path: &Path) -> Option<PathBuf> {
+    Some(
+        app_executable_path
+            .parent()?
+            .join(".factory-linux/update-builder"),
+    )
+}
+
+fn repository_builder_bundle() -> Option<PathBuf> {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+fn builder_bundle_is_complete(root: &Path) -> bool {
+    REQUIRED_BUNDLE_ENTRIES
+        .iter()
+        .all(|entry| root.join(entry).exists())
 }
 
 fn copy_entry(source: &Path, destination: &Path, optional: bool) -> Result<()> {
@@ -540,6 +581,94 @@ mod tests {
         assert!(error
             .to_string()
             .contains("Required builder bundle path is missing"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn build_update_falls_back_to_app_adjacent_builder_when_configured_bundle_is_incomplete(
+    ) -> Result<()> {
+        let temp = tempdir()?;
+        let configured_builder = temp.path().join("configured-builder");
+        create_minimal_builder_bundle(&configured_builder, false, false)?;
+
+        let app_dir = temp.path().join("app");
+        let bundled_builder = app_dir.join(".factory-linux/update-builder");
+        create_minimal_builder_bundle(&bundled_builder, true, true)?;
+
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        fs::create_dir_all(&paths.state_dir)?;
+
+        let config = RuntimeConfig {
+            github_owner: "ThewindMom".to_string(),
+            github_repo: "factory-desktop-linux".to_string(),
+            github_api_base_url: "https://api.github.com".to_string(),
+            dmg_api_url: "https://example.com/api/desktop".to_string(),
+            arch: "x64".to_string(),
+            initial_check_delay_seconds: 1,
+            check_interval_hours: 6,
+            auto_install_on_app_exit: false,
+            notifications: false,
+            workspace_root: temp.path().join("workspace"),
+            builder_bundle_root: configured_builder,
+            app_executable_path: app_dir.join("factory-desktop"),
+        };
+        let mut state = PersistedState::new(false);
+        let dmg_path = temp.path().join("Factory.dmg");
+        fs::write(&dmg_path, b"dmg")?;
+
+        let artifacts = build_update(&config, &mut state, &paths, "9.9.9", &dmg_path).await?;
+
+        assert!(artifacts.package_path.is_file());
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        Ok(())
+    }
+
+    fn create_minimal_builder_bundle(
+        root: &Path,
+        include_packaging: bool,
+        include_managed_node: bool,
+    ) -> Result<()> {
+        fs::create_dir_all(root.join("dist"))?;
+        fs::write(root.join("dist/cli.js"), b"")?;
+        fs::write(root.join("package.json"), b"{}")?;
+        fs::write(root.join("package-lock.json"), b"{}")?;
+        fs::create_dir_all(root.join("node_modules"))?;
+        fs::create_dir_all(root.join("src/patches"))?;
+        if include_packaging {
+            fs::create_dir_all(root.join("packaging"))?;
+        }
+        if include_managed_node {
+            create_fake_node_runtime(root)?;
+        }
+        Ok(())
+    }
+
+    fn create_fake_node_runtime(root: &Path) -> Result<()> {
+        let bin = root.join("node-runtime/bin");
+        fs::create_dir_all(&bin)?;
+        let node = bin.join("node");
+        fs::write(
+            &node,
+            b"#!/bin/sh\nmkdir -p \"$FACTORY_DIST_DIR\"\nprintf deb > \"$FACTORY_DIST_DIR/factory-desktop_9.9.9_amd64.deb\"\n",
+        )?;
+        fs::write(bin.join("npm"), b"")?;
+        fs::write(bin.join("npx"), b"")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&node)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&node, permissions)?;
+        }
+
         Ok(())
     }
 }

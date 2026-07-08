@@ -59,6 +59,7 @@ fi
 BUILDER_STAGED="$APP_DIR/.factory-linux/update-builder"
 if [ -d "$BUILDER_STAGED" ]; then
     mkdir -p /opt/factory-desktop
+    rm -rf /opt/factory-desktop/update-builder
     cp -r "$BUILDER_STAGED" /opt/factory-desktop/update-builder
 fi
 # Create the ~/.factory/automations directory for each logged-in user.
