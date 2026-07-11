@@ -1,393 +1,248 @@
 # Factory Desktop for Linux
 
-Unofficial Linux build wrapper for [Factory Droid Desktop](https://factory.ai/product/desktop).
-The official Factory Desktop app is available for macOS and Windows; this repository
-covers Linux by converting the upstream macOS `Factory.dmg` into a runnable Linux
-Electron app.
+Factory Desktop running natively on Linux, with `.deb`, `.rpm`, and AppImage
+packages built from Factory's official Desktop release.
 
-The project builds native `.deb` and `.rpm` packages, supports local AppImage self-builds,
-and can install a local update manager that rebuilds future Linux packages from
-newer upstream DMGs.
-
-It is **not** affiliated with, endorsed by, or supported by Factory. It does not
-redistribute Factory software — it automates the conversion process that users
-perform on their own copies of the official DMG.
+This community port keeps the familiar Factory interface and adds Linux-native
+window controls, updates, and daemon integration. It is unofficial and is not
+affiliated with or supported by Factory.
 
 ## Install
 
-### Debian, Ubuntu, Pop!_OS, Mint, Elementary
+Open the [latest release](https://github.com/ThewindMom/factory-desktop-linux/releases/latest)
+and download the package for your distribution.
 
-Download the latest `.deb` from [Releases](../../releases), then:
+### Ubuntu, Debian, Mint, Pop!_OS, Elementary, Zorin
 
-```bash
-sudo dpkg -i factory-desktop_*_amd64.deb
-sudo apt-get install -f -y
-```
-
-Or build from source:
+Download the file ending in `_amd64.deb`, then run:
 
 ```bash
-git clone https://github.com/ThewindMom/factory-droid-desktop-linux-port.git
-cd factory-droid-desktop-linux-port
-make build-app
-make deb
-make install
+sudo apt install ~/Downloads/factory-desktop_*_amd64.deb
 ```
 
-### Fedora, RHEL, openSUSE
+If your browser saved it somewhere else, replace `~/Downloads/` with that
+directory.
 
-Download the latest `.rpm` from [Releases](../../releases), then:
+### Fedora, RHEL, Rocky, AlmaLinux, openSUSE
+
+Download the file ending in `.x86_64.rpm`, then run:
 
 ```bash
-sudo rpm -i factory-desktop-*.x86_64.rpm
+sudo dnf install ~/Downloads/factory-desktop-*.x86_64.rpm
 ```
 
-Or build from source:
+On openSUSE, use:
 
 ```bash
-git clone https://github.com/ThewindMom/factory-droid-desktop-linux-port.git
-cd factory-droid-desktop-linux-port
-make build-app
-make rpm
-make install
+sudo zypper install ~/Downloads/factory-desktop-*.x86_64.rpm
 ```
 
-### Other distros (AppImage self-build)
+### AppImage
+
+Download the `.AppImage`, then run:
 
 ```bash
-make build-app
-make appimage
+chmod +x ~/Downloads/Factory-*.AppImage
+~/Downloads/Factory-*.AppImage
 ```
 
-AppImage builds and repo-only generated apps do not include the native-package
-updater.
+The AppImage is portable, but it does not install the native background update
+service. Use `.deb` or `.rpm` for the complete experience.
 
+## First Launch
 
-## Make Targets
-
-| Target | Description |
-|---|---|
-| `make build-app` | Build Linux app (auto-fetches DMG from Factory if `--dmg` omitted) |
-| `make build-app DMG=/path` | Build from a specific DMG |
-| `make deb` | Build `.deb` package into `dist/` |
-| `make rpm` | Build `.rpm` package into `dist/` |
-| `make appimage` | Build AppImage into `dist/` |
-| `make package` | Build native package (auto-detects distro) |
-| `make install` | Install the latest native package |
-| `make run-app` | Launch the built Electron app |
-| `make check` | Run `cargo check` for the updater |
-| `make test` | Run updater test suite |
-| `make build-updater` | Build the Rust updater binary (release) |
-| `make service-enable` | Enable and start `factory-update-manager.service` |
-| `make service-status` | Show updater service status |
-| `make clean` | Remove build artifacts and `dist/` |
-| `make clean-state` | Remove updater runtime state from XDG directories |
-
-Variables:
-
-| Variable | Description |
-|---|---|
-| `DMG=/path/file.dmg` | Override the DMG to build from |
-| `PACKAGE_WITH_UPDATER=0` | Build without the updater or service unit |
-| `DEB=/path/file.deb` | Override the `.deb` used by `make install` |
-| `RPM=/path/file.rpm` | Override the `.rpm` used by `make install` |
-
-## Feature Matrix
-
-| Feature | Default | Enable / use | Docs |
-|---|---|---|---|
-| Standard Factory Desktop UI | Always | Install or run the generated app | This README |
-| Linux Electron runtime | Always | Bundled during build | [How it works](#how-it-works) |
-| Global Droid CLI | Always | Reuses the installed CLI; installs it on first launch only when missing | [How it works](#how-it-works) |
-| asar patch registry | Always | Applied during build | [Patches](#asar-patches) |
-| Native packages | Always | `make package && make install` | This README |
-| Auto-update manager | Native packages | Included unless `PACKAGE_WITH_UPDATER=0` | [Updater](#auto-update-manager) |
-| AppImage self-build | Manual | `make build-app && make appimage` | This README |
-| GitHub Releases CI | Automatic | Pushes + daily cron check for new upstream versions | [CI](#github-releases) |
-
-## How It Works
-
-The pipeline mirrors the [codex-desktop-linux](https://github.com/ilysenko/codex-desktop-linux)
-model, adapted for Factory Droid Desktop:
-
-```
-Factory endpoint ──► fetch official DMG ──► extract app.asar + payloads
-                                                        │
-                                                        ▼
-                              asar patch registry ──► assemble Linux Electron app
-                                                               │
-                                                               ▼
-                                     electron-builder → .deb / .rpm / AppImage
-```
-
-### 1. Fetch the official DMG
-
-The DMG is pulled from Factory's own desktop endpoint — no manual download:
-
-```
-https://app.factory.ai/api/desktop?platform=darwin&architecture={x64|arm64}
-```
-
-The endpoint 302-redirects to a short-lived presigned S3 URL. The builder
-follows the redirect, streams the DMG to `work/`, computes its SHA-256, and
-parses the version from the URL.
+Open **Factory Desktop** from your application menu. You can also launch a
+native-package installation from a terminal:
 
 ```bash
-node dist/cli.js fetch-dmg --arch x64
+/opt/Factory/factory-desktop
 ```
 
-### 2. asar Patches
+Factory Desktop uses the global `droid` CLI already installed on your computer.
+It checks `PATH`, `~/.local/bin/droid`, `/usr/local/bin/droid`, and
+`/usr/bin/droid`.
 
-Linux compatibility fixes live in a **patch registry**
-([`src/patches/registry.ts`](src/patches/registry.ts)). Each patch has a stable
-id, a description, an `apply()`, and an isolated result. Patches use
-**version-agnostic regex patterns** that match structural code shapes, not
-hardcoded minified strings — so they survive upstream version bumps.
+If Droid is missing, Factory Desktop runs Factory's official Linux installer
+once. The resulting global CLI is shared by your terminal, Factory Desktop,
+Droid Computers, and the background daemon. The Desktop package never contains
+its own copy of Droid.
 
-The registry currently ships four core patches:
-
-- **`daemon-transport`** — forces WebSocket daemon transport on Linux, guards
-  against `droid daemon --listen ipc`, and makes the app adopt the user-owned
-  Factory Droid daemon instead of spawning a competing Desktop-owned child
-  daemon. The packaged user service runs the system `droid` CLI with both
-  `--remote-access` and `--enable-child-ipc`, so Droid Computers and the
-  local Desktop backend share one daemon identity.
-
-- **`auto-updater`** — guards `autoUpdater.checkForUpdates()` and
-  `autoUpdater.quitAndInstall()` with `process.platform!=="linux"`. Factory
-  Desktop's built-in auto-updater targets macOS/Windows update endpoints; on
-  Linux it would fail and potentially crash the app. The Rust-based
-  `factory-update-manager` handles Linux updates independently.
-
-- **`window-controls`** — injects `titleBarOverlay` on Linux with static dark
-  colors (`#1e1e1e` background, `#cccccc` symbols), giving a frameless window
-  with Electron-drawn minimize/maximize/close buttons. Static colors are used
-  because `nativeTheme` may not be initialized at BrowserWindow construction
-  time, causing the window to silently fail to appear. Without this, the app
-  uses `"hidden"` titleBarStyle on Linux (because it's not win32), resulting in
-  no title bar at all.
-
-- **`about-panel`** — augments the existing "About Factory" dialog on Linux
-  (Help → About Factory) and injects a closeable top-right in-app update panel.
-  The About dialog shows detailed build/runtime versions. The in-app panel is
-  intentionally narrower: it appears only when `factory-update-manager` reports
-  a newer Factory Desktop candidate, then shows the current/latest desktop
-  versions and a copyable update-manager command. It hides itself when the
-  installed desktop version is current, so normal use is not cluttered with CLI
-  or daemon implementation details.
-
-### 3. Droid CLI binary
-
-Factory Desktop Linux uses the **system-installed** `droid` CLI. It resolves
-`droid` from `PATH`, then common GUI-launch locations:
-`~/.local/bin/droid`, `/usr/local/bin/droid`, and `/usr/bin/droid`.
-
-The package does **not** bundle `resources/bin/droid`. Native `.deb`/`.rpm`
-installs ship a `factory-droid-daemon.service` systemd user unit that resolves
-the system `droid` CLI and runs:
+Check the active CLI at any time:
 
 ```bash
-droid daemon --remote-access --enable-child-ipc --droid-path <system-droid> --host 127.0.0.1 --port 37643
+command -v droid
+droid --version
 ```
 
-This keeps the app, the Droid Computers settings page, and remote relay
-registration on one CLI version and one daemon identity. AppImage users should
-run an equivalent user service manually because AppImage does not install
-systemd units.
+## Updating
 
-If no global CLI is found, Factory Desktop runs Factory's official Linux
-installer (`https://app.factory.ai/cli`) once. The resulting
-`~/.local/bin/droid` remains the single CLI used by both Desktop and terminal
-sessions; no daemon executable is copied into the application package.
+When an update is available, Factory shows its native orange **Update** button
+beside the Back and Forward buttons at the top of the window.
 
-### 4. Assemble + package
+Click **Update** and Factory Desktop will:
 
-The runtime assembly
-([`src/runtime-assembly.ts`](src/runtime-assembly.ts)) stages a Linux Electron
-app directory with `resources/app.asar`, applies the registered patches, and
-leaves Droid to global runtime resolution. `electron-builder` then produces
-native installers without a Droid executable inside them.
+1. Download and prepare the latest Linux package.
+2. Ask for administrator authorization when installation is ready.
+3. Close Factory Desktop.
+4. Install the package.
+5. Open Factory Desktop again.
 
-## Auto-Update Manager
+You do not need to download another package manually for normal updates.
 
-Default native packages install `factory-update-manager`, a companion
-`systemd --user` service.
+The global Droid CLI remains separate from Desktop releases. Update it with:
 
-The daemon has **two independent update paths**:
+```bash
+droid update
+```
 
-### Port build updates (new `.deb` from GitHub Releases)
+## How the Droid Daemon Works
 
-The daemon checks GitHub Releases for new port builds — `.deb` packages with
-the latest patches and asar fixes. It compares the `portBuildSha` in
-the installed `build-info.json` against the commit SHA the release tag points
-to (queried via the GitHub git refs API). If they differ, the daemon downloads
-the `.deb` and installs it using the same pkexec + polkit flow as upstream
-updates.
+Native packages install `factory-droid-daemon.service` as a systemd user
+service. Both the service and Factory Desktop use the same global `droid`
+executable and the same daemon identity on port `37643`.
 
-Port updates take priority over upstream DMG rebuilds because they contain the
-latest Linux integration patches. Droid remains independently installed globally.
+Check it with:
 
-### Upstream DMG updates (new Factory Desktop version)
+```bash
+systemctl --user status factory-droid-daemon.service
+ps -eo args | grep '[d]roid daemon'
+```
 
-The daemon checks the upstream Factory Desktop DMG endpoint on startup, every
-6 hours, and on app launch when stale. When a new DMG version is detected, it
-downloads the DMG and rebuilds a local `.deb` using the builder code bundled at
-`.deb` install time (`/opt/factory-desktop/update-builder/`).
+Factory first adopts an already healthy global daemon. If Droid was missing,
+Desktop installs it globally, restarts the service, and waits for it to become
+healthy before considering a direct fallback.
 
-### Shared install flow
+## Troubleshooting
 
-Both update paths converge on the same install machinery:
+### Factory Desktop does not open
 
-- Waits for Electron to exit before installing a ready update
-- Relaunches Factory Desktop after the package install succeeds
-- Runs unprivileged; the final package install uses `pkexec` with a polkit
-  policy that asks the active user to authorize the privileged installation
-- Performs rollback to the previous known-good package
+Run it from a terminal to see the startup error:
 
-### Inspect State
+```bash
+/opt/Factory/factory-desktop
+```
+
+### The daemon does not start
+
+```bash
+command -v droid
+droid --version
+systemctl --user restart factory-droid-daemon.service
+systemctl --user status factory-droid-daemon.service
+journalctl --user -u factory-droid-daemon.service -n 100 --no-pager
+```
+
+### The Update button does not appear
+
+The button only appears when a newer release is available. Check the update
+service and request an immediate check:
 
 ```bash
 systemctl --user status factory-update-manager.service
+factory-update-manager check-now
 factory-update-manager status --json
-sed -n '1,160p' ~/.local/state/factory-update-manager/state.json
-sed -n '1,160p' ~/.local/state/factory-update-manager/service.log
 ```
 
-Runtime files:
+### Roll back a bad update
 
-```text
-~/.config/factory-update-manager/config.toml
-~/.local/state/factory-update-manager/state.json
-~/.local/state/factory-update-manager/service.log
-~/.cache/factory-update-manager/
-~/.cache/factory-desktop/launcher.log
-~/.local/state/factory-desktop/app.pid
-```
-
-### Rollback
-
-If a rebuilt update installs but the previous retained package was better,
-close Factory Desktop and run:
+Close Factory Desktop, then run:
 
 ```bash
 factory-update-manager rollback
 ```
 
-### Manual-Update Packages
+## Build from Source
 
-Build a native package without the resident updater:
+Most users should install a package from
+[Releases](https://github.com/ThewindMom/factory-desktop-linux/releases/latest).
+Building locally is intended for contributors and unsupported distributions.
+
+### Prerequisites
+
+- Node.js 18 or newer; Node.js 22 is recommended
+- npm
+- Rust
+- `file`, `sha256sum`, `dpkg-deb` or RPM tools
+- `desktop-file-validate`, `xdg-mime`, and `xvfb-run`
+- 7-Zip 21 or newer; do not use `p7zip-full` 16.02
+
+Clone and prepare the project:
 
 ```bash
-PACKAGE_WITH_UPDATER=0 make build-app
-PACKAGE_WITH_UPDATER=0 make deb
+git clone https://github.com/ThewindMom/factory-desktop-linux.git
+cd factory-desktop-linux
+npm ci
+npm run build
+```
+
+Build and install the native package for your distribution:
+
+```bash
+make build-app
+make package
 make install
 ```
 
-That package omits `factory-update-manager`, the user service unit, updater
-polkit policy, and the bundled update builder.
+The builder fetches Factory's current official macOS DMG, extracts the Electron
+application, applies the Linux compatibility patches, and creates Linux
+packages. It never copies the DMG's Droid binary into the Linux application.
 
-## GitHub Releases
+### Useful build commands
 
-A GitHub Actions workflow (`.github/workflows/release.yml`) rebuilds native
-packages on every push to `master` (when `src/`, `packaging/`, `patches/`,
-`updater/`, `Makefile`, `package.json`, `package-lock.json`, `tsconfig.json`,
-or the workflow file itself change), and also runs a daily cron check for new
-upstream versions.
+| Command | Purpose |
+|---|---|
+| `make build-app` | Fetch the current Factory DMG and assemble the Linux app |
+| `make build-app DMG=/path/Factory.dmg` | Build from a specific local DMG |
+| `make deb` | Build a Debian package in `dist/` |
+| `make rpm` | Build an RPM package in `dist/` |
+| `make appimage` | Build an AppImage in `dist/` |
+| `make package` | Auto-detect and build the native package format |
+| `make install` | Install the newest locally built native package |
+| `make run-app` | Run the assembled application |
+| `make test` | Run the Rust updater tests |
+| `make clean` | Remove generated build artifacts |
 
-The workflow:
-
-1. Builds the TypeScript engine and Rust updater
-2. Fetches the upstream DMG
-3. Applies all registered asar patches
-4. Assembles the Linux Electron app
-5. Packages `.deb` and `.rpm` with the updater bundled
-6. Creates or updates a GitHub release with both packages attached
-7. Moves the release tag to the current commit
-
-Release notes include the build SHA, commit log since the previous release,
-and the build timestamp.
-
-The daemon's port-update check reads the tag's commit SHA directly via the
-GitHub git refs API — not `target_commitish` (which may be a branch name or
-stale).
-
-## Prerequisites
-
-- Node.js `>=18` (Node 22 recommended for Electron 39)
-- npm
-- `7z` (**7-Zip >=21**, not p7zip-full 16.02 — modern Factory DMGs use LZFSE
-  compression which p7zip cannot decompress; install from
-  [7-zip.org](https://www.7-zip.org/download.html)),
-  `file`, `sha256sum`, `dpkg-deb`, `desktop-file-validate`, `xdg-mime`, `xvfb-run`
-- Rust (for building the updater — `make build-updater`)
-
-Install 7-Zip >=21 (Ubuntu 22.04's `p7zip-full` ships 16.02 which cannot
-handle LZFSE-compressed DMGs; the `7zip` apt package 21.07 has a Headers
-Error bug on Factory DMGs — install the official 26.01 binary):
+Build without the native update manager:
 
 ```bash
-curl -sfL "https://www.7-zip.org/a/7z2601-linux-x64.tar.xz" -o /tmp/7z.tar.xz
-mkdir -p /tmp/7zip && tar xf /tmp/7z.tar.xz -C /tmp/7zip
-sudo install -m755 /tmp/7zip/7zz /usr/local/bin/7zz
-sudo ln -sf /usr/local/bin/7zz /usr/local/bin/7z
+PACKAGE_WITH_UPDATER=0 make build-app
+PACKAGE_WITH_UPDATER=0 make package
+make install
 ```
-
-Check your host:
-
-```bash
-node dist/cli.js check-tools
-```
-
-## Packaging Targets
-
-Supported first-class targets:
-
-- Debian package (`.deb`) — primary
-- RPM package (`.rpm`) — for Fedora/RHEL/openSUSE
-- AppImage — local self-build
-
-`make package` auto-detects the distro and builds the appropriate format;
-`make rpm` builds RPM directly.
-
-## Build the Updater
-
-The updater is a Rust workspace in `updater/`:
-
-```bash
-cd updater
-cargo build --release
-# Binary: updater/target/release/factory-update-manager
-```
-
-The `make deb` and `make package` targets automatically detect the built
-binary and bundle it into the deb package (unless `PACKAGE_WITH_UPDATER=0`).
 
 ## Development
 
 ```bash
-npm install --no-audit --no-fund
-npm run build        # tsc → dist/
-npm run typecheck    # tsc --noEmit
-npm run lint         # eslint
-npm test             # jest --runInBand
-make check           # cargo check
-make test            # cargo test
+npm ci
+npm run build
+npm run typecheck
+npm run lint
+npm test -- --runInBand
+
+cd updater
+cargo fmt --all -- --check
+cargo clippy --bin factory-update-manager -- -D warnings
+cargo test
 ```
 
-## Troubleshooting
+Linux compatibility changes are applied through the patch registry in
+`src/patches/registry.ts`. Package validation rejects any accidental
+`resources/bin/droid`, ensuring Desktop always uses the global CLI.
 
-| Problem | First thing to try |
-|---|---|
-| No window controls | The window-controls patch isn't applied — rebuild from latest source |
-| Daemon won't start | Run `systemctl --user status factory-droid-daemon.service` and check `~/.factory/logs/daemon-stderr.log`; the Desktop should adopt that user service, not spawn its own daemon |
-| `make build-app` fails | Run `node dist/cli.js check-tools` to verify all dependencies are installed |
-| Custom Models page empty | Check the system `droid --version` and update your installed droid CLI; the Linux package does not bundle its own CLI |
+## Release Automation
+
+Every push to `master` that changes the application, packaging, updater, or
+release workflow triggers a GitHub Actions build. The workflow publishes `.deb`,
+`.rpm`, and AppImage assets to the current Factory Desktop release.
+
+It also checks Factory's upstream version daily and creates a new Linux release
+when Factory Desktop changes.
 
 ## Disclaimer
 
-This is an unofficial community project. Factory Droid Desktop is a product of
-Factory. This tool does not redistribute any Factory software; it automates the
-conversion process that users perform on their own copies.
+This is an unofficial community project. Factory Desktop and Droid are products
+of Factory. Use this port at your own risk and report Linux-port issues in this
+repository rather than to Factory support.
 
 ## License
 
