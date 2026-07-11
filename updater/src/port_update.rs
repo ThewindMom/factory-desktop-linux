@@ -3,8 +3,8 @@
 //!
 //! Unlike the upstream DMG check (which downloads a DMG and rebuilds locally),
 //! port updates download a pre-built `.deb` from GitHub Releases. This is
-//! simpler and faster (no local rebuild), and delivers the latest patches
-//! (asar patches, droid resolver, window controls, etc.) to existing installs.
+//! simpler and faster (no local rebuild), and delivers the latest asar and
+//! window-control patches to existing installs.
 //!
 //! The check works by comparing the `portBuildSha` in the installed
 //! `build-info.json` against the commit SHA the release tag points to.

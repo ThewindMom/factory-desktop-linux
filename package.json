@@ -16,7 +16,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist work build coverage",
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "lint": "eslint --max-warnings=0 --ext .ts ."

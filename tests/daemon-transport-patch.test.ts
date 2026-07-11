@@ -161,8 +161,17 @@ describe("patchDaemonTransport", () => {
       expect(patchedContent).toContain("FACTORY_DROID_PATH");
       expect(patchedContent).toContain('process.platform==="linux"');
       expect(patchedContent).toContain('"command -v droid"');
+      expect(patchedContent).toContain("https://app.factory.ai/cli");
+      expect(patchedContent).toContain('"--proto","=https","--tlsv1.2"');
+      expect(patchedContent).toContain("mkdtempSync");
+      expect(patchedContent).toContain("f.constants.X_OK");
+      expect(patchedContent).not.toContain("| sh");
+      expect(patchedContent).toContain('p.join(os.homedir(),".local","bin","droid")');
       expect(patchedContent).toContain("/* linux-system-droid-daemon-adoption-patch */");
       expect(patchedContent).toContain("Adopted system Droid daemon");
+      expect(patchedContent).toContain('"--user","restart","factory-droid-daemon.service"');
+      expect(patchedContent).toContain("attempt<20");
+      expect(patchedContent).toContain("setTimeout(resolve,250)");
       expect(patchedContent).toContain("const servicePort=37643");
     } finally {
       fsSync.rmSync(tmpDir, { recursive: true, force: true });

@@ -285,7 +285,7 @@ describe("packaging", () => {
   });
 
   describe("validateDebPackage", () => {
-    test("validates a real .deb package with expected contents", () => {
+    test("rejects a .deb that contains a bundled droid even when executable", () => {
       // Check if dpkg-deb is available
       try {
         execSync("which dpkg-deb", { encoding: "utf-8" });
@@ -305,6 +305,8 @@ describe("packaging", () => {
         expect(result.hasAppAsar).toBe(true);
         expect(result.hasDroid).toBe(true);
         expect(result.droidIsExecutable).toBe(true);
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContain("Bundled resources/bin/droid must not be present.");
         expect(result.hasDesktopIntegration).toBe(true);
         expect(result.hasDroidDaemonService).toBe(true);
       } finally {

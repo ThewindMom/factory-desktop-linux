@@ -98,7 +98,7 @@ Variables:
 |---|---|---|---|
 | Standard Factory Desktop UI | Always | Install or run the generated app | This README |
 | Linux Electron runtime | Always | Bundled during build | [How it works](#how-it-works) |
-| Droid CLI binary | Always | Resolved from `@factory/cli-linux-x64` npm | [How it works](#how-it-works) |
+| Global Droid CLI | Always | Reuses the installed CLI; installs it on first launch only when missing | [How it works](#how-it-works) |
 | asar patch registry | Always | Applied during build | [Patches](#asar-patches) |
 | Native packages | Always | `make package && make install` | This README |
 | Auto-update manager | Native packages | Included unless `PACKAGE_WITH_UPDATER=0` | [Updater](#auto-update-manager) |
@@ -115,11 +115,8 @@ Factory endpoint ──► fetch official DMG ──► extract app.asar + paylo
                                                         │
                                                         ▼
                               asar patch registry ──► assemble Linux Electron app
-                                        │                      │
-                                        ▼                      ▼
-                              resolve Linux droid binary
-                                        │                      │
-                                        └──────────┬───────────┘
+                                                               │
+                                                               ▼
                                      electron-builder → .deb / .rpm / AppImage
 ```
 
@@ -198,13 +195,18 @@ registration on one CLI version and one daemon identity. AppImage users should
 run an equivalent user service manually because AppImage does not install
 systemd units.
 
+If no global CLI is found, Factory Desktop runs Factory's official Linux
+installer (`https://app.factory.ai/cli`) once. The resulting
+`~/.local/bin/droid` remains the single CLI used by both Desktop and terminal
+sessions; no daemon executable is copied into the application package.
+
 ### 4. Assemble + package
 
 The runtime assembly
 ([`src/runtime-assembly.ts`](src/runtime-assembly.ts)) stages a Linux Electron
 app directory with `resources/app.asar`, applies the registered patches, and
-validates that a system `droid` CLI is available. `electron-builder` then
-produces native installers.
+leaves Droid to global runtime resolution. `electron-builder` then produces
+native installers without a Droid executable inside them.
 
 ## Auto-Update Manager
 
@@ -216,14 +218,14 @@ The daemon has **two independent update paths**:
 ### Port build updates (new `.deb` from GitHub Releases)
 
 The daemon checks GitHub Releases for new port builds — `.deb` packages with
-the latest patches, droid, and asar fixes. It compares the `portBuildSha` in
+the latest patches and asar fixes. It compares the `portBuildSha` in
 the installed `build-info.json` against the commit SHA the release tag points
 to (queried via the GitHub git refs API). If they differ, the daemon downloads
 the `.deb` and installs it using the same pkexec + polkit flow as upstream
 updates.
 
-Port updates take priority over upstream DMG rebuilds — they include the latest
-patches AND the latest droid, so they're strictly newer.
+Port updates take priority over upstream DMG rebuilds because they contain the
+latest Linux integration patches. Droid remains independently installed globally.
 
 ### Upstream DMG updates (new Factory Desktop version)
 
@@ -239,7 +241,7 @@ Both update paths converge on the same install machinery:
 - Waits for Electron to exit before installing a ready update
 - Relaunches Factory Desktop after the package install succeeds
 - Runs unprivileged; the final package install uses `pkexec` with a polkit
-  policy configured for **passwordless** installation (no password prompt)
+  policy that asks the active user to authorize the privileged installation
 - Performs rollback to the previous known-good package
 
 ### Inspect State

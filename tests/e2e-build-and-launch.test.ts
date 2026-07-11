@@ -118,7 +118,7 @@ describeIfDmgAvailable("VAL-CROSS-001: One-command build from DMG to Linux app",
     expect(result.exitCode).not.toBe(0);
   });
 
-  test("build-all performs extraction, droid resolution, runtime assembly, and package generation", () => {
+  test("build-all performs extraction, runtime assembly, and package generation", () => {
     // Clean work and dist to ensure a fresh build
     if (fs.existsSync(workDir)) {
       fs.rmSync(workDir, { recursive: true, force: true });

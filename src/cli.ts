@@ -40,12 +40,6 @@ import {
   BinaryType,
 } from "./runtime-classifier";
 import {
-  resolveDroid,
-  validateExistingDroid,
-  formatDroidResult,
-  VersionPolicy,
-} from "./droid-resolver";
-import {
   fetchDesktopDmg,
   formatDmgFetchResult,
   isValidDarwinArch,
@@ -86,48 +80,6 @@ async function resolveDmgInput(
     `✓ Fetched ${arch} DMG (v${fetchResult.version || "unknown"}) -> ${fetchResult.dmgPath}\n`
   );
   return fetchResult.dmgPath;
-}
-
-function resolveSystemDroidCli(): { path: string; version: string | null } {
-  const candidates: string[] = [];
-  if (process.env.FACTORY_DROID_PATH) candidates.push(process.env.FACTORY_DROID_PATH);
-  try {
-    const resolved = execSync("command -v droid", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 5000,
-    }).trim();
-    if (resolved) candidates.push(resolved);
-  } catch {
-    // Fall through to common GUI-launch locations.
-  }
-
-  candidates.push(
-    path.join(os.homedir(), ".local", "bin", "droid"),
-    "/usr/local/bin/droid",
-    "/usr/bin/droid",
-  );
-
-  const droidPath = candidates.find((candidate) => fs.existsSync(candidate));
-  if (!droidPath) {
-    throw new Error(
-      "System droid CLI not found. Install droid so `command -v droid` works " +
-        "or place it at ~/.local/bin/droid, /usr/local/bin/droid, or /usr/bin/droid."
-    );
-  }
-
-  let version: string | null = null;
-  try {
-    version = execSync(`"${droidPath}" --version`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 15000,
-    }).trim();
-  } catch {
-    version = null;
-  }
-
-  return { path: droidPath, version };
 }
 
 program
@@ -936,7 +888,8 @@ program
           process.stdout.write(`\n${formatDebValidationResult(debResult)}\n`);
 
           if (!debResult.valid) {
-            process.stderr.write(`\n⚠ Debian package validation has issues.\n`);
+            process.stderr.write(`\n✗ Debian package validation failed.\n`);
+            process.exit(1);
           }
 
           // Validate droid binary in deb (VAL-PACKAGE-005)
@@ -972,7 +925,8 @@ program
           process.stdout.write(`\n${formatAppImageValidationResult(appImageResult)}\n`);
 
           if (!appImageResult.valid) {
-            process.stderr.write(`\n⚠ AppImage validation has issues.\n`);
+            process.stderr.write(`\n✗ AppImage validation failed.\n`);
+            process.exit(1);
           }
 
           // Validate droid binary in AppImage (VAL-PACKAGE-005)
@@ -1144,154 +1098,6 @@ function collectDistArtifacts(projectRoot: string): string[] {
 }
 
 /**
- * `resolve-droid` subcommand: download and verify the Linux x86_64 droid binary.
- *
- * VAL-EXTRACT-006: Linux droid binary matches selected version policy.
- * VAL-EXTRACT-009: Droid download checksum is verified.
- */
-program
-  .command("resolve-droid")
-  .description("Download and verify the Linux x86_64 Factory CLI droid binary")
-  .requiredOption(
-    "--factory-version <version>",
-    "Factory Desktop version to resolve droid for"
-  )
-  .option(
-    "--version-policy <policy>",
-    'Version policy: "exact" or "fallback-to-latest" (default)',
-    "fallback-to-latest"
-  )
-  .option(
-    "--output-dir <dir>",
-    "Directory to save the droid binary (defaults to work/droid/)"
-  )
-  .option(
-    "--existing-droid <path>",
-    "Validate an existing droid binary instead of downloading"
-  )
-  .option(
-    "--download-url <url>",
-    "Override the download URL (for testing)"
-  )
-  .option(
-    "--checksum-url <url>",
-    "Override the checksum URL (for testing)"
-  )
-  .option(
-    "--timeout <ms>",
-    "Download timeout in milliseconds",
-    "120000"
-  )
-  .option(
-    "--release-mode <mode>",
-    "Release mode: safe (default) or permission-cleared",
-    DEFAULT_RELEASE_MODE
-  )
-  .action(async (options) => {
-    const releaseMode = resolveReleaseMode(options.releaseMode);
-    const projectRoot = process.cwd();
-    const dirs = resolveDirs(projectRoot);
-
-    process.stdout.write(`Release mode: ${describeReleaseMode(releaseMode)}\n`);
-
-    // Validate version
-    if (!isValidSemver(options.factoryVersion)) {
-      process.stderr.write(
-        `Invalid version format: "${options.factoryVersion}". Expected semver (X.Y.Z).\n`
-      );
-      process.exit(1);
-    }
-
-    // Resolve version policy
-    let versionPolicy: VersionPolicy;
-    if (options.versionPolicy === "exact") {
-      versionPolicy = VersionPolicy.Exact;
-    } else if (options.versionPolicy === "fallback-to-latest") {
-      versionPolicy = VersionPolicy.FallbackToLatest;
-    } else {
-      process.stderr.write(
-        `Invalid version policy: "${options.versionPolicy}". Must be "exact" or "fallback-to-latest".\n`
-      );
-      process.exit(1);
-    }
-
-    process.stdout.write(
-      `Factory version: ${options.factoryVersion}\n` +
-        `Version policy: ${versionPolicy}\n` +
-        `Download source: npm (@factory/cli-linux-x64)\n`
-    );
-    const outputDir = options.outputDir || path.join(dirs.work, "droid");
-    const timeoutMs = parseInt(options.timeout, 10);
-
-    // Track artifacts for hygiene
-    const tracker = new ArtifactTracker(projectRoot);
-
-    try {
-      ensureGeneratedDirs(dirs);
-      tracker.track(outputDir, "Droid binary output");
-
-      let result;
-
-      if (options.existingDroid) {
-        // Validate existing droid binary
-        process.stdout.write(`\nValidating existing droid binary: ${options.existingDroid}\n`);
-        result = validateExistingDroid(
-          options.existingDroid,
-          options.factoryVersion,
-          { versionPolicy }
-        );
-      } else {
-        // Download and verify droid
-        process.stdout.write(`\nDownloading Linux x86_64 droid binary...\n`);
-        result = await resolveDroid(options.factoryVersion, outputDir, {
-          versionPolicy,
-          timeoutMs,
-          downloadUrlOverride: options.downloadUrl,
-          checksumUrlOverride: options.checksumUrl,
-        });
-      }
-
-      process.stdout.write(`\n${formatDroidResult(result)}\n`);
-
-      if (!result.success) {
-        process.stderr.write(
-          `\n✗ Linux droid binary resolution failed.\n`
-        );
-        const cleaned = tracker.cleanupOnFailure();
-        if (cleaned.length > 0) {
-          process.stderr.write(
-            `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
-          );
-        }
-        process.exit(1);
-      }
-
-      // Final git status check
-      const finalGitCheck = tracker.verifyGitIgnored(projectRoot);
-      if (!finalGitCheck.clean) {
-        process.stderr.write(
-          `\nERROR: Proprietary artifacts detected in tracked locations: ` +
-          `${finalGitCheck.tracked.join(", ")}\n`
-        );
-        process.exit(1);
-      }
-
-      process.stdout.write(
-        `\n✓ Linux droid binary resolved. Binary is in generated directories.\n`
-      );
-    } catch (err) {
-      process.stderr.write(`Droid resolution failed: ${String(err)}\n`);
-      const cleaned = tracker.cleanupOnFailure();
-      if (cleaned.length > 0) {
-        process.stderr.write(
-          `Cleaned up partial artifacts: ${cleaned.join(", ")}\n`
-        );
-      }
-      process.exit(1);
-    }
-  });
-
-/**
  * `validate-runtime` subcommand: validate runtime binaries for Linux.
  *
  * VAL-EXTRACT-005: Mac runtime components are not accepted for Linux payload.
@@ -1346,17 +1152,16 @@ program
 /**
  * `assemble` subcommand: assemble a Linux Electron app directory.
  *
- * Takes extracted app.asar and resolved Linux droid, assembles a
- * complete Linux Electron app directory with proper layout.
+ * Takes extracted app.asar and assembles a complete Linux Electron app.
+ * Droid is resolved or installed globally when Factory starts.
  *
  * Fulfills: VAL-RUNTIME-001, VAL-RUNTIME-002, VAL-RUNTIME-003,
  *           VAL-RUNTIME-010, VAL-RUNTIME-011, VAL-RUNTIME-016
  */
 program
   .command("assemble")
-  .description("Assemble a Linux Electron app directory from extracted app.asar and resolved droid")
+  .description("Assemble a Linux Electron app directory from extracted app.asar")
   .requiredOption("--asar <path>", "Path to extracted app.asar file")
-  .requiredOption("--droid <path>", "Path to resolved Linux droid ELF binary")
   .option(
     "--asar-hash <hash>",
     "Expected SHA-256 hash of the app.asar file (for integrity verification)"
@@ -1394,16 +1199,12 @@ program
       assembleLinuxRuntime,
       validateRuntimeLayout,
       validateAsarIntact,
-      validateDroidBinary,
       validateSharedLibraries,
-      checkResourcesPathResolution,
       checkLaunchRequirements,
       formatAssemblyResult,
       formatLayoutResult,
       formatAsarIntactResult,
-      formatDroidBinaryResult,
       formatSharedLibResult,
-      formatResourcesPathResult,
       formatLaunchRequirementsResult,
     } = await import("./runtime-assembly");
 
@@ -1416,11 +1217,6 @@ program
     // Validate inputs
     if (!fs.existsSync(options.asar)) {
       process.stderr.write(`app.asar not found: ${options.asar}\n`);
-      process.exit(1);
-    }
-
-    if (!fs.existsSync(options.droid)) {
-      process.stderr.write(`Droid binary not found: ${options.droid}\n`);
       process.exit(1);
     }
 
@@ -1442,7 +1238,6 @@ program
     process.stdout.write(
       `\nAssembling Linux Electron runtime...\n` +
         `  app.asar: ${options.asar}\n` +
-        `  droid: ${options.droid}\n` +
         `  Electron version: ${options.electronVersion}\n` +
         `  App name: ${options.appName}\n` +
         `  Output: ${outputDir}\n`
@@ -1459,7 +1254,6 @@ program
       const result = await assembleLinuxRuntime({
         asarPath: options.asar,
         asarHash,
-        droidPath: options.droid,
         outputDir,
         electronVersion: options.electronVersion,
         appName: options.appName,
@@ -1491,14 +1285,8 @@ program
       const asarIntactResult = validateAsarIntact(result.appDir, asarHash);
       process.stdout.write(`\n${formatAsarIntactResult(asarIntactResult)}\n`);
 
-      const droidBinaryResult = validateDroidBinary(result.appDir);
-      process.stdout.write(`\n${formatDroidBinaryResult(droidBinaryResult)}\n`);
-
       const sharedLibResult = validateSharedLibraries(result.appDir);
       process.stdout.write(`\n${formatSharedLibResult(sharedLibResult)}\n`);
-
-      const resourcesPathResult = checkResourcesPathResolution(result.appDir);
-      process.stdout.write(`\n${formatResourcesPathResult(resourcesPathResult)}\n`);
 
       // Verify git hygiene
       const finalGitCheck = tracker.verifyGitIgnored(projectRoot);
@@ -1522,9 +1310,7 @@ program
         `  Executable: ${result.executablePath}\n` +
         `  Layout: ${layoutResult.isLinuxLayout ? "Linux" : "non-standard"}\n` +
         `  ASAR intact: ${asarIntactResult.intact ? "yes" : "no"}\n` +
-        `  Droid valid: ${droidBinaryResult.valid ? "yes" : "no"}\n` +
         `  Shared libs: ${sharedLibResult.valid ? "all resolvable" : "MISSING: " + sharedLibResult.missingLibs.join(", ")}\n` +
-        `  Resources path: ${resourcesPathResult.valid ? "correct" : "incorrect"}\n` +
         `  Normal launch: ${launchResult.normalLaunchPossible ? "yes" : "requires --no-sandbox (documented)"}\n`
       );
     } catch (err) {
@@ -2674,7 +2460,7 @@ program
  * `build-all` subcommand: one-command build flow from a valid DMG to
  * launchable Linux app packages.
  *
- * Chains: DMG validation → extraction → droid resolution → runtime assembly →
+ * Chains: DMG validation → extraction → runtime assembly →
  * desktop integration → packaging (deb/AppImage) → optional checksums and
  * launch validation.
  *
@@ -2891,20 +2677,6 @@ program
         }
       }
 
-      // ─── Step 3: Resolve System Droid ────────────────────────────
-      process.stdout.write(`\n─── Step 3/6: Resolving system droid CLI ────────────────\n`);
-
-      let systemDroid: { path: string; version: string | null };
-      try {
-        systemDroid = resolveSystemDroidCli();
-      } catch (err) {
-        process.stderr.write(`${String(err)}\n`);
-        process.exit(1);
-      }
-
-      process.stdout.write(`✓ System droid resolved: ${systemDroid.path}\n`);
-      process.stdout.write(`  Droid version: ${systemDroid.version || "unknown"}\n`);
-
       // ─── Step 4: Assemble Linux Electron Runtime ────────────────
       process.stdout.write(`\n─── Step 4/6: Assembling Linux Electron runtime ────────────\n`);
 
@@ -2912,14 +2684,12 @@ program
         assembleLinuxRuntime,
         formatAssemblyResult,
         validateRuntimeLayout,
-        validateDroidBinary,
         validateSharedLibraries,
       } = await import("./runtime-assembly");
 
       const assembleResult = await assembleLinuxRuntime({
         asarPath,
         asarHash,
-        droidPath: systemDroid.path,
         outputDir: dirs.build,
         electronVersion: options.electronVersion,
         appName: options.execName,
@@ -2951,7 +2721,7 @@ program
               path: options.dmg,
             },
             factoryVersion: selectedVersion,
-            systemDroidVersion: systemDroid.version ?? null,
+            systemDroidVersion: null,
             electronVersion: options.electronVersion,
             buildTimestamp: new Date().toISOString(),
             portBuildSha: process.env.GITHUB_SHA ?? process.env.FACTORY_PORT_BUILD_SHA ?? null,
@@ -3048,15 +2818,10 @@ program
       // Validate if requested
       if (options.validate) {
         const layoutResult = validateRuntimeLayout(appDir);
-        const droidBinaryResult = validateDroidBinary(appDir);
         const sharedLibResult = validateSharedLibraries(appDir);
 
         if (!layoutResult.isLinuxLayout) {
           process.stderr.write(`✗ Runtime layout is not Linux-compatible.\n`);
-          process.exit(1);
-        }
-        if (!droidBinaryResult.valid) {
-          process.stderr.write(`✗ Packaged droid binary is invalid.\n`);
           process.exit(1);
         }
         if (!sharedLibResult.valid) {
@@ -3249,7 +3014,7 @@ program
         `╚══════════════════════════════════════════════════════════════╝\n\n` +
         `  Factory version: ${selectedVersion}\n` +
         `  App directory:   ${appDir}\n` +
-        `  System droid:   ${systemDroid.path}\n` +
+        `  System droid:   resolved globally at runtime\n` +
         `  Desktop entry:   ${desktopResult.desktopFilePath}\n` +
         `  Artifacts:\n`
       );

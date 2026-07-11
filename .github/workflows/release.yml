@@ -101,13 +101,7 @@ jobs:
         run: npm ci
 
       - name: Build TypeScript
-        run: npx tsc
-
-      - name: Resolve Linux droid CLI
-        run: |
-          node dist/cli.js resolve-droid \
-            --factory-version "${{ needs.check-and-release.outputs.version }}"
-          echo "FACTORY_DROID_PATH=$GITHUB_WORKSPACE/work/droid/droid" >> "$GITHUB_ENV"
+        run: npm run build
 
       - name: Build Rust updater
         run: cd updater && cargo build --release
@@ -177,7 +171,7 @@ jobs:
 
           **Includes:**
           - Linux Electron runtime
-          - Droid CLI binary (latest from @factory/cli-linux-x64 npm)
+          - Global Droid CLI integration (never bundled into Desktop)
           - Version-agnostic asar patches:
             - Daemon transport (force WebSocket on Linux)
             - Auto-updater guard (disable Electron autoUpdater on Linux)

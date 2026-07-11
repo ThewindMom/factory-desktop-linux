@@ -775,6 +775,26 @@ describe("assembleLinuxRuntime", () => {
     expect(fs.existsSync(droidInApp)).toBe(false);
   });
 
+  it("assembles without a build-host droid because runtime installs the global fallback", async () => {
+    const mockDist = createMockElectronDist(tempDir);
+    const asarPath = await createMockAsar(tempDir);
+    const outputDir = path.join(tempDir, "build-output");
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const result = await assembleLinuxRuntime({
+      asarPath,
+      asarHash: computeFileHash(asarPath),
+      outputDir,
+      electronVersion: "39.2.7",
+      appName: "factory-desktop",
+      electronDistOverride: mockDist,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.droidResult.path).toBe("");
+    expect(fs.existsSync(path.join(result.appDir, "resources", "bin", "droid"))).toBe(false);
+  });
+
   it("removes default_app.asar from resources", async () => {
     const mockDist = createMockElectronDist(tempDir);
     const asarPath = await createMockAsar(tempDir);

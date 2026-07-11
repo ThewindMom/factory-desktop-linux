@@ -405,39 +405,6 @@ fn upstream_check_is_fresh(config: &RuntimeConfig, state: &PersistedState) -> bo
     Utc::now().signed_duration_since(last_successful_check_at) < freshness_window
 }
 
-/// Fetch the latest droid CLI version from the npm registry.
-///
-/// Queries `https://registry.npmjs.org/@factory/cli-linux-x64` and parses
-/// the `dist-tags.latest` field. Returns `Ok(None)` on network failure so
-/// the status command never fails due to a transient network issue.
-async fn fetch_latest_droid_version(client: &Client) -> Result<Option<String>> {
-    let response = client
-        .get("https://registry.npmjs.org/@factory/cli-linux-x64")
-        .timeout(Duration::from_secs(8))
-        .send()
-        .await;
-    let response = match response {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("failed to fetch latest droid version from npm: {e}");
-            return Ok(None);
-        }
-    };
-    let body: serde_json::Value = match response.json().await {
-        Ok(v) => v,
-        Err(e) => {
-            warn!("failed to parse npm registry response: {e}");
-            return Ok(None);
-        }
-    };
-    let latest = body
-        .get("dist-tags")
-        .and_then(|t| t.get("latest"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    Ok(latest)
-}
-
 async fn run_status(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -448,36 +415,8 @@ async fn run_status(
     complete_pending_install_if_already_installed(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
 
-    // Fetch installed + latest droid version for drift advisory.
-    let installed_droid = installed_droid_version(config);
-    let client = Client::builder().build()?;
-    let latest_droid = fetch_latest_droid_version(&client).await.unwrap_or(None);
-
-    let droid_drift = match (&installed_droid, &latest_droid) {
-        (Some(installed), Some(latest)) => installed != latest,
-        _ => false,
-    };
-
     if json {
-        let mut json_state = serde_json::to_value(state)?;
-        let obj = json_state.as_object_mut().unwrap();
-        if let Some(ref v) = installed_droid {
-            obj.insert(
-                "droid_version".to_string(),
-                serde_json::Value::String(v.clone()),
-            );
-        }
-        if let Some(ref v) = latest_droid {
-            obj.insert(
-                "droid_latest_version".to_string(),
-                serde_json::Value::String(v.clone()),
-            );
-        }
-        obj.insert(
-            "droid_drift".to_string(),
-            serde_json::Value::Bool(droid_drift),
-        );
-        println!("{}", serde_json::to_string_pretty(&json_state)?);
+        println!("{}", serde_json::to_string_pretty(state)?);
     } else {
         println!("status: {:?}", state.status);
         println!("installed_version: {}", state.installed_version);
@@ -497,18 +436,6 @@ async fn run_status(
                 .unwrap_or("none")
         );
         println!("{}", update_error_status_line(state));
-
-        if let Some(ref installed) = installed_droid {
-            println!("droid_version: {}", installed);
-            if droid_drift {
-                if let Some(ref latest) = latest_droid {
-                    println!(
-                        "droid_drift: installed={}, latest={} — a newer droid CLI is available.                          It will be included in the next port build.",
-                        installed, latest
-                    );
-                }
-            }
-        }
     }
 
     Ok(())
@@ -1018,8 +945,6 @@ struct InstalledBuildInfo {
     upstream_dmg: Option<InstalledUpstreamDmg>,
     #[serde(default)]
     port_build_sha: Option<String>,
-    #[serde(default)]
-    droid_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1106,17 +1031,6 @@ fn installed_port_build_sha(config: &RuntimeConfig) -> Option<String> {
             let content = fs::read_to_string(&path).ok()?;
             let build_info = serde_json::from_str::<InstalledBuildInfo>(&content).ok()?;
             build_info.port_build_sha.filter(|value| !value.is_empty())
-        })
-}
-
-/// Read the droidVersion from the installed build-info.json, if present.
-fn installed_droid_version(config: &RuntimeConfig) -> Option<String> {
-    installed_build_info_paths(config)
-        .into_iter()
-        .find_map(|path| {
-            let content = fs::read_to_string(&path).ok()?;
-            let build_info = serde_json::from_str::<InstalledBuildInfo>(&content).ok()?;
-            build_info.droid_version.filter(|value| !value.is_empty())
         })
 }
 
@@ -2383,100 +2297,5 @@ mod tests {
             .is_some_and(|message| message.contains("returned an error status")));
         assert!(state.notified_events.is_empty());
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn fetch_latest_droid_version_returns_latest_from_mock() -> Result<()> {
-        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-
-        Mock::given(matchers::method("GET"))
-            .and(matchers::path("@factory/cli-linux-x64"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "name": "@factory/cli-linux-x64",
-                "dist-tags": { "latest": "0.111.0" },
-                "versions": {}
-            })))
-            .mount(&server)
-            .await;
-
-        // We can't redirect the hardcoded URL in fetch_latest_droid_version,
-        // but we can verify the JSON parsing contract by parsing the same
-        // response shape that the function expects.
-        let body: serde_json::Value = serde_json::json!({
-            "dist-tags": { "latest": "0.111.0" }
-        });
-        let latest = body
-            .get("dist-tags")
-            .and_then(|t| t.get("latest"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        assert_eq!(latest, Some("0.111.0".to_string()));
-
-        Ok(())
-    }
-
-    #[test]
-    fn droid_drift_detection_logic() {
-        // Drift is true when both present and different.
-        let installed = Some("0.109.3".to_string());
-        let latest = Some("0.111.0".to_string());
-        let drift = match (&installed, &latest) {
-            (Some(i), Some(l)) => i != l,
-            _ => false,
-        };
-        assert!(drift, "drift when versions differ");
-
-        // No drift when versions match.
-        let installed2 = Some("0.111.0".to_string());
-        let latest2 = Some("0.111.0".to_string());
-        let drift2 = match (&installed2, &latest2) {
-            (Some(i), Some(l)) => i != l,
-            _ => false,
-        };
-        assert!(!drift2, "no drift when versions match");
-
-        // No drift when installed is missing.
-        let drift3 = match (&None::<String>, &Some("0.111.0".to_string())) {
-            (Some(i), Some(l)) => i != l,
-            _ => false,
-        };
-        assert!(!drift3, "no drift when installed is missing");
-
-        // No drift when latest is missing (network failure).
-        let drift4 = match (&Some("0.109.3".to_string()), &None::<String>) {
-            (Some(i), Some(l)) => i != l,
-            _ => false,
-        };
-        assert!(!drift4, "no drift when latest is missing");
-    }
-
-    #[test]
-    fn installed_droid_version_reads_build_info() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = test_config(temp.path());
-
-        // test_config sets app_executable_path to root.join("not-running-electron"),
-        // so parent() is root, and build-info.json is at root/.factory-linux/build-info.json
-        let build_info_dir = temp.path().join(".factory-linux");
-        fs::create_dir_all(&build_info_dir).unwrap();
-        let build_info_path = build_info_dir.join("build-info.json");
-        fs::write(
-            &build_info_path,
-            r#"{"upstreamDmg":{"sha256":"abc","version":"0.110.0"},"factoryVersion":"0.110.0","droidVersion":"0.111.0","electronVersion":"39.2.7","buildTimestamp":"2026-06-23T00:00:00Z","portBuildSha":"abc123"}"#,
-        ).unwrap();
-
-        let droid_version = installed_droid_version(&config);
-        assert_eq!(droid_version, Some("0.111.0".to_string()));
-
-        // Test missing droidVersion field.
-        fs::write(
-            &build_info_path,
-            r#"{"upstreamDmg":{"sha256":"abc","version":"0.110.0"},"factoryVersion":"0.110.0"}"#,
-        )
-        .unwrap();
-        let droid_version = installed_droid_version(&config);
-        assert_eq!(droid_version, None);
     }
 }

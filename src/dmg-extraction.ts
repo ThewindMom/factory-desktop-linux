@@ -26,7 +26,6 @@ export const DMG_CONTENT_PATHS = {
   electronIcns: "Factory/Factory.app/Contents/Resources/electron.icns",
   electronFrameworkPlist:
     "Factory/Factory.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist",
-  droidBinary: "Factory/Factory.app/Contents/Resources/bin/droid",
 } as const;
 
 /** Extraction result */

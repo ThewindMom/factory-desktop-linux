@@ -870,8 +870,8 @@ export function validateDebPackage(debPath: string): DebValidationResult {
     if (!hasAppAsar) {
       errors.push("resources/app.asar not found in .deb package contents.");
     }
-    if (hasDroid && !droidIsExecutable) {
-      errors.push("Bundled resources/bin/droid is present but not executable.");
+    if (hasDroid) {
+      errors.push("Bundled resources/bin/droid must not be present.");
     }
     if (!hasDroidDaemonService) {
       errors.push("factory-droid-daemon.service not found in .deb package contents.");
@@ -1065,8 +1065,8 @@ export function validateAppImage(appImagePath: string): AppImageValidationResult
     if (!hasAppAsar) {
       errors.push("resources/app.asar not found in AppImage contents.");
     }
-    if (hasDroid && !droidIsExecutable) {
-      errors.push("Bundled resources/bin/droid is present but not executable.");
+    if (hasDroid) {
+      errors.push("Bundled resources/bin/droid must not be present.");
     }
     if (!hasDesktopEntry) {
       errors.push(".desktop entry not found in AppImage contents.");

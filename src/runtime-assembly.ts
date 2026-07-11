@@ -340,14 +340,6 @@ export async function assembleLinuxRuntime(
     errors.push(`app.asar not found: ${options.asarPath}`);
   }
 
-  const systemDroidPath = resolveSystemDroidPath(options.droidPath);
-  if (!systemDroidPath) {
-    errors.push(
-      "System droid CLI not found. Install droid so `command -v droid` works " +
-        "or place it at ~/.local/bin/droid, /usr/local/bin/droid, or /usr/bin/droid."
-    );
-  }
-
   if (!fs.existsSync(electronDistDir)) {
     errors.push(
       `Electron dist directory not found: ${electronDistDir}. ` +
@@ -486,7 +478,18 @@ export async function assembleLinuxRuntime(
       ? [daemonTransportPatchResult.patchedHash]
       : [],
   });
-  const droidResult = validateDroidBinary(appDir, systemDroidPath);
+  const droidResult = options.droidPath
+    ? validateDroidBinary(appDir, options.droidPath)
+    : {
+        valid: true,
+        path: "",
+        exists: false,
+        isElf: false,
+        isExecutable: false,
+        architecture: "unknown",
+        errors: [] as string[],
+        warnings: ["Droid is resolved or installed globally when Factory starts."],
+      };
   const sharedLibResult = validateSharedLibraries(appDir, { appName: options.appName });
 
   // Collect validation errors
@@ -1272,15 +1275,8 @@ export function formatAssemblyResult(result: RuntimeAssemblyResult): string {
 
   lines.push("");
   lines.push("Droid binary:");
-  lines.push(
-    `  Valid: ${result.droidResult.valid ? "yes" : "no"}`
-  );
-  lines.push(
-    `  ELF: ${result.droidResult.isElf ? "yes" : "no"}`
-  );
-  lines.push(
-    `  Executable: ${result.droidResult.isExecutable ? "yes" : "no"}`
-  );
+  lines.push("  Global runtime resolution: enabled");
+  lines.push("  Bundled: no");
 
   lines.push("");
   lines.push("Shared libraries:");

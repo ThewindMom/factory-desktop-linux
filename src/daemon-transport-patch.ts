@@ -203,10 +203,13 @@ function buildSystemDroidPathReplacement(appAlias: string, pathAlias: string): s
   return (
     `${appAlias}.app.isPackaged)r=process.platform==="linux"?(()=>{${SYSTEM_DROID_MARKER}` +
     `try{const f=require("fs"),p=require("path"),cp=require("child_process"),os=require("os");` +
-    `if(process.env.FACTORY_DROID_PATH&&f.existsSync(process.env.FACTORY_DROID_PATH))return process.env.FACTORY_DROID_PATH;` +
-    `try{const v=cp.execFileSync("sh",["-lc","command -v droid"],{encoding:"utf-8",timeout:2000}).trim();if(v)return v}catch(e){}` +
-    `const c=[p.join(os.homedir(),".local","bin","droid"),"/usr/local/bin/droid","/usr/bin/droid"];for(const x of c)if(f.existsSync(x))return x;return c[0]` +
-    `}catch(e){return require("path").join(require("os").homedir(),".local","bin","droid")}})():${pathAlias}.join(process.resourcesPath,"bin",process.platform==="win32"?"droid.exe":"droid")`
+    `const usable=x=>{try{return f.statSync(x).isFile()&&(f.accessSync(x,f.constants.X_OK),true)}catch(e){return false}};` +
+    `if(process.env.FACTORY_DROID_PATH&&usable(process.env.FACTORY_DROID_PATH))return process.env.FACTORY_DROID_PATH;` +
+    `try{const v=cp.execFileSync("sh",["-lc","command -v droid"],{encoding:"utf-8",timeout:2000}).trim();if(usable(v))return v}catch(e){}` +
+    `const c=[p.join(os.homedir(),".local","bin","droid"),"/usr/local/bin/droid","/usr/bin/droid"];for(const x of c)if(usable(x))return x;` +
+    `const dir=f.mkdtempSync(p.join(os.tmpdir(),"factory-droid-installer-")),tmp=p.join(dir,"install.sh");try{cp.execFileSync("curl",["--fail","--silent","--show-error","--location","--proto","=https","--tlsv1.2","--output",tmp,"https://app.factory.ai/cli"],{encoding:"utf-8",timeout:120000});f.chmodSync(tmp,384);cp.execFileSync("sh",[tmp],{encoding:"utf-8",timeout:120000,env:process.env})}finally{f.rmSync(dir,{recursive:true,force:true})}` +
+    `for(const x of c)if(usable(x))return x;throw new Error("Factory installed droid, but it was not found in a global CLI location")` +
+    `}catch(e){throw e}})():${pathAlias}.join(process.resourcesPath,"bin",process.platform==="win32"?"droid.exe":"droid")`
   );
 }
 
@@ -237,8 +240,9 @@ function buildSystemDaemonAdoptionReplacement(
     `if(process.platform==="linux"&&${portVar}!==null){${SYSTEM_DAEMON_ADOPTION_MARKER}` +
     `const servicePort=37643;this.currentPort=servicePort;` +
     `let ok=false;try{const fs=require("fs");for(const pid of fs.readdirSync("/proc")){if(!/^\\d+$/.test(pid))continue;let cmd="";try{cmd=fs.readFileSync("/proc/"+pid+"/cmdline","utf-8").replace(/\\0/g," ")}catch(e){}if(cmd.includes("droid")&&cmd.includes("daemon")&&cmd.includes("--remote-access")&&cmd.includes("--enable-child-ipc")&&(cmd.includes("--port "+servicePort)||cmd.includes("--port="+servicePort))){ok=true;break}}}catch(e){}` +
-    `if(ok){try{const res=await fetch("http://127.0.0.1:"+servicePort+"/health",{signal:AbortSignal.timeout(2000)});const body=(await res.text()).trim();if(res.ok&&(body==="factory-daemon ok"||body.startsWith("factory-daemon ok ")||body==="ok")){this.lastStaleCheckOutcome="adopted_system_daemon";this.process=null;this.state="running";this.processGeneration++;const z=${trackerRef};if(z&&z.endPhase)z.endPhase();${loggerVar}("[daemon] Adopted system Droid daemon",{port:servicePort});this.startHealthPoll();return}}catch(e){}}` +
-    `this.lastStaleCheckOutcome="system_daemon_missing";this.state="stopped";this.currentPort=null;this.transportMode=null;this.ipcDaemonReady=false;{const z=${trackerRef};if(z&&z.markOutcome)z.markOutcome("daemon_spawn_failed","system Droid daemon not running on port 37643");if(z&&z.finalize)z.finalize()}return}` +
+    `if(!ok){try{${commandBuilder}({port:servicePort,transportMode:${transportVar}});require("child_process").execFileSync("systemctl",["--user","restart","factory-droid-daemon.service"],{timeout:10000,stdio:"ignore"});ok=true}catch(e){}}` +
+    `if(ok){for(let attempt=0;attempt<20;attempt++){try{const res=await fetch("http://127.0.0.1:"+servicePort+"/health",{signal:AbortSignal.timeout(2000)});const body=(await res.text()).trim();if(res.ok&&(body==="factory-daemon ok"||body.startsWith("factory-daemon ok ")||body==="ok")){this.lastStaleCheckOutcome="adopted_system_daemon";this.process=null;this.state="running";this.processGeneration++;const z=${trackerRef};if(z&&z.endPhase)z.endPhase();${loggerVar}("[daemon] Adopted system Droid daemon",{port:servicePort});this.startHealthPoll();return}}catch(e){}await new Promise(resolve=>setTimeout(resolve,250))}}` +
+    `this.lastStaleCheckOutcome="system_daemon_missing";this.currentPort=${portVar}}` +
     `const{command:${commandVar},args:${argsVar},cwd:${cwdVar},env:${envVar}}=${commandBuilder}({port:${portVar},transportMode:${transportVar}});${loggerVar}("[daemon] Starting daemon"`
   );
 }
