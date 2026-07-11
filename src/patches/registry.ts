@@ -20,6 +20,7 @@ import { patchDaemonTransport } from "../daemon-transport-patch";
 import { patchAutoUpdater } from "../auto-updater-patch";
 import { patchWindowControls } from "../window-controls-patch";
 import { patchAboutPanel } from "../about-panel-patch";
+import { patchLinuxNativeUpdater } from "../linux-native-updater-patch";
 
 // ─── Patch contract ────────────────────────────────────────────────────────
 
@@ -143,6 +144,18 @@ const autoUpdaterPatch: Patch = {
     }),
 };
 
+const linuxNativeUpdaterPatch: Patch = {
+  id: "linux-native-updater",
+  description:
+    "Connect Factory's native update button and state UI to the Linux " +
+    "update manager, including install-on-click and relaunch.",
+  apply: (options) => patchLinuxNativeUpdater({
+    asarPath: options.asarPath,
+    skipIfPatched: options.skipIfPatched,
+    tolerateMissingTarget: options.tolerateMissingTarget,
+  }),
+};
+
 /**
  * The window controls patch injects titleBarOverlay on Linux — a frameless
  * window (titleBarStyle: "hidden") with Electron-drawn min/max/close buttons
@@ -186,6 +199,7 @@ const aboutPanelPatch: Patch = {
 export const REGISTERED_PATCHES: ReadonlyArray<Patch> = [
   daemonTransportPatch,
   autoUpdaterPatch,
+  linuxNativeUpdaterPatch,
   windowControlsPatch,
   aboutPanelPatch,
 ];

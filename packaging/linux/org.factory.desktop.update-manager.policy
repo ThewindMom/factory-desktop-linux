@@ -7,13 +7,7 @@
   PolicyKit policy for the Factory Desktop Update Manager.
 
   Allows the factory-update-manager binary to install locally rebuilt
-  Debian packages without a password prompt, so the resident
-  systemd --user service can apply updates seamlessly.
-
-  Security tradeoff: any process running as the active user could
-  trigger a package install through the updater binary. This is
-  acceptable for a single-user desktop machine where the user
-  explicitly installed Factory Desktop and trusts the updater.
+  Debian packages after the active user authorizes the privileged action.
 -->
 
 <policyconfig>
@@ -27,7 +21,7 @@
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
-      <allow_active>yes</allow_active>
+      <allow_active>auth_admin_keep</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/factory-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-deb</annotate>
@@ -40,7 +34,7 @@
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
-      <allow_active>yes</allow_active>
+      <allow_active>auth_admin_keep</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/factory-update-manager</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">install-rollback-deb</annotate>
