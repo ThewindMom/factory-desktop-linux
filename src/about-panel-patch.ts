@@ -87,6 +87,10 @@ const OLD_CHIP_DROID_LABEL =
 const CHIP_DROID_LABEL = "";
 const OLD_CHIP_TEXT_JOIN = 'const text=parts.join(" · ");';
 const CHIP_TEXT_JOIN = 'const text=parts.join("\\n");';
+const OLD_CHIP_APP_ROOT =
+  'const p=require("path"),f=require("fs"),os=require("os");let r=p.dirname(process.execPath);if(f.existsSync(p.join(r,".factory-linux","build-info.json"))===false)r=p.dirname(p.dirname(process.execPath));let b={};try{b=JSON.parse(f.readFileSync(p.join(r,".factory-linux","build-info.json"),"utf-8"))}catch(e){}';
+const CHIP_APP_ROOT =
+  'const p=require("path"),f=require("fs"),os=require("os");let appRoot=p.dirname(process.execPath);if(f.existsSync(p.join(appRoot,".factory-linux","build-info.json"))===false)appRoot=p.dirname(p.dirname(process.execPath));let b={};try{b=JSON.parse(f.readFileSync(p.join(appRoot,".factory-linux","build-info.json"),"utf-8"))}catch(e){}';
 const OLD_CHIP_TIMER_CLEANUP_REGEX =
   /if\(!(\w+)\.__factoryLinuxVersionChipTimer\)\{\1\.__factoryLinuxVersionChipTimer=setInterval\(render,5000\);\1\.on\("closed",\(\)=>\{clearInterval\(\1\.__factoryLinuxVersionChipTimer\);\1\.__factoryLinuxVersionChipTimer=null\}\)\}/;
 const SHADOWED_CHIP_TIMER_REGEX =
@@ -183,10 +187,10 @@ function buildInjectedVisibleVersionChip(
     `${windowRef}.webContents.on("did-finish-load",()=>{${originalHandlerBody};` +
     `(()=>{${CHIP_PATCH_MARKER}const render=()=>{try{` +
     `const p=require("path"),f=require("fs"),os=require("os");` +
-    `let r=p.dirname(process.execPath);` +
-    `if(f.existsSync(p.join(r,".factory-linux","build-info.json"))===false)` +
-    `r=p.dirname(p.dirname(process.execPath));` +
-    `let b={};try{b=JSON.parse(f.readFileSync(p.join(r,".factory-linux","build-info.json"),"utf-8"))}catch(e){}` +
+    `let appRoot=p.dirname(process.execPath);` +
+    `if(f.existsSync(p.join(appRoot,".factory-linux","build-info.json"))===false)` +
+    `appRoot=p.dirname(p.dirname(process.execPath));` +
+    `let b={};try{b=JSON.parse(f.readFileSync(p.join(appRoot,".factory-linux","build-info.json"),"utf-8"))}catch(e){}` +
     `let s={};const sd=process.env.XDG_STATE_HOME||p.join(os.homedir(),".local","state");` +
     `try{s=JSON.parse(f.readFileSync(p.join(sd,"factory-update-manager","state.json"),"utf-8"))}catch(e){}` +
     `const v=b.factoryVersion||${appGetVersionRef},cv=s.candidate_version;` +
@@ -194,20 +198,20 @@ function buildInjectedVisibleVersionChip(
     `const preparing=["downloading_dmg","preparing_workspace","building_package","installing"].includes(s.status);` +
     `const failed=s.status==="failed";` +
     `const desktopUpdate=!!(cv&&cv!==v);` +
-    `if(!desktopUpdate){const js="(()=>{const e=document.getElementById('factory-linux-version-chip');if(e)e.remove()})()";${windowRef}.webContents.executeJavaScript(js,true).catch(()=>{});return}` +
+    `if(!desktopUpdate){const js="(()=>{const e=document.getElementById('factory-linux-version-chip');if(e)e.remove()})()";${windowRef}.webContents.executeJavaScript(js,true).catch(e=>console.error("[factory-linux-update-ui] remove failed",e));return}` +
     `let headline=failed?"Factory Desktop update failed":ready?"Factory Desktop update ready":preparing?"Preparing Factory Desktop update":"Factory Desktop update available";` +
     `const parts=[headline,"Current "+v,"Latest "+cv];` +
     `if(failed){parts.push("Could not prepare update");if(s.error_message)parts.push(String(s.error_message).slice(0,160))}else if(ready)parts.push("Install when Factory is closed");else if(preparing)parts.push("Preparing update package");else parts.push("Run update check to prepare it");` +
     `const action=ready?"install-ready":"check-now";` +
-    `const payload={text:parts,action,cta:failed?"Retry":"Update"};` +
-    `const js="(()=>{const d="+JSON.stringify(payload)+";if(sessionStorage.getItem('factory-linux-version-panel-hidden')==='1')return;let e=document.getElementById('factory-linux-version-chip');` +
+    `const payload={text:parts,action,cta:failed?"Retry":"Update",version:cv,status:s.status||"available"};` +
+    `const js="(()=>{const d="+JSON.stringify(payload)+";const hiddenKey=d.version+':'+d.status;if(sessionStorage.getItem('factory-linux-version-panel-hidden')===hiddenKey)return;let e=document.getElementById('factory-linux-version-chip');` +
     `if(!e){e=document.createElement('div');e.id='factory-linux-version-chip';e.setAttribute('role','status');e.setAttribute('aria-label','Factory Desktop update status');e.style.cssText='${CHIP_STYLE_CSS}';` +
-    `const c=document.createElement('button');c.type='button';c.setAttribute('aria-label','Hide update status');c.textContent='×';c.style.cssText='${CHIP_CLOSE_BUTTON_CSS}';c.onclick=()=>{sessionStorage.setItem('factory-linux-version-panel-hidden','1');e.remove()};e.appendChild(c);` +
+    `const c=document.createElement('button');c.type='button';c.setAttribute('aria-label','Hide update status');c.textContent='×';c.style.cssText='${CHIP_CLOSE_BUTTON_CSS}';c.onclick=()=>{sessionStorage.setItem('factory-linux-version-panel-hidden',hiddenKey);e.remove()};e.appendChild(c);` +
     `const body=document.createElement('div');body.id='factory-linux-version-chip-body';body.style.cssText='padding-right:18px;white-space:pre-line;text-wrap:balance;';e.appendChild(body);` +
     `const btn=document.createElement('button');btn.type='button';btn.id='factory-linux-version-update';btn.style.cssText='${CHIP_UPDATE_BUTTON_CSS}';btn.textContent=d.cta||'Update';btn.onclick=()=>{window.__factoryLinuxUpdateRequest=d.action;btn.textContent='Starting...'};e.appendChild(btn);document.body.appendChild(e)}` +
     `const body=e.querySelector('#factory-linux-version-chip-body');if(body)body.textContent=d.text.join('\\\\n');const code=e.querySelector('#factory-linux-version-command');if(code)code.remove();const btn=e.querySelector('#factory-linux-version-update');if(btn){btn.style.display=d.action?'block':'none';if(d.action)btn.textContent=d.cta||'Update'}const req=window.__factoryLinuxUpdateRequest||'';window.__factoryLinuxUpdateRequest='';return req})()";` +
-    `${windowRef}.webContents.executeJavaScript(js,true).then((req)=>{if(req==="install-ready"||req==="check-now"){try{require("child_process").spawn("factory-update-manager",[req],{detached:true,stdio:"ignore"}).unref();if(req==="install-ready")setTimeout(()=>{try{require("electron").app.quit()}catch(e){}},500)}catch(e){}}}).catch(()=>{})` +
-    `}catch(e){}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const timer=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=timer;${windowRef}.on("closed",()=>{clearInterval(timer)})}})()})`
+    `${windowRef}.webContents.executeJavaScript(js,true).then((req)=>{if(req==="install-ready"||req==="check-now"){try{require("child_process").spawn("factory-update-manager",[req],{detached:true,stdio:"ignore"}).unref();if(req==="install-ready")setTimeout(()=>{try{require("electron").app.quit()}catch(e){console.error("[factory-linux-update-ui] quit failed",e)}},500)}catch(e){console.error("[factory-linux-update-ui] action failed",e)}}}).catch(e=>console.error("[factory-linux-update-ui] render failed",e))` +
+    `}catch(e){console.error("[factory-linux-update-ui] state refresh failed",e)}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const timer=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=timer;${windowRef}.on("closed",()=>{clearInterval(timer)})}})()})`
   );
 }
 
@@ -295,6 +299,7 @@ export async function patchAboutPanel(
         [OLD_CHIP_FACTORY_LABEL, CHIP_FACTORY_LABEL],
         [OLD_CHIP_DROID_LABEL, CHIP_DROID_LABEL],
         [OLD_CHIP_TEXT_JOIN, CHIP_TEXT_JOIN],
+        [OLD_CHIP_APP_ROOT, CHIP_APP_ROOT],
       ] as const) {
         if (patchedContent.includes(oldSnippet)) {
           patchedContent = patchedContent.replace(oldSnippet, newSnippet);

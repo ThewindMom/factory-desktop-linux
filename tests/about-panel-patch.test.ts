@@ -188,6 +188,15 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).toContain("s.error_message");
     expect(patchedContent).toContain("Hide update status");
     expect(patchedContent).toContain("sessionStorage");
+    expect(patchedContent).toContain("hiddenKey=d.version+':'+d.status");
+    expect(patchedContent).toContain(
+      "sessionStorage.getItem('factory-linux-version-panel-hidden')===hiddenKey",
+    );
+    expect(patchedContent).toContain(
+      "sessionStorage.setItem('factory-linux-version-panel-hidden',hiddenKey)",
+    );
+    expect(patchedContent).toContain("[factory-linux-update-ui]");
+    expect(patchedContent).not.toContain(".catch(()=>{})");
     expect(patchedContent).toContain("__factoryLinuxUpdateRequest");
     expect(patchedContent).toContain("child_process");
     expect(patchedContent).toContain("spawn");
@@ -257,6 +266,40 @@ describe("patchAboutPanel", () => {
     expect(patchedContent).toContain("cv===v");
   });
 
+  it("does not shadow Factory's BrowserWindow alias while rendering status", async () => {
+    /* eslint-disable @typescript-eslint/no-var-requires */
+    const asar = require("@electron/asar");
+    const fs = require("fs");
+    const path = require("path");
+    /* eslint-enable @typescript-eslint/no-var-requires */
+
+    const tmpDir = expect.getState().testPath + ".tmp-window-r-" + Date.now();
+    tmpDirs.push(tmpDir);
+    const buildDir = path.join(tmpDir, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const bundleContent =
+      'function gu(){const s=[{label:"About Factory",click:()=>{' +
+      ABOUT_DETAIL_0_114_3 +
+      '}}]}];Y.Menu.setApplicationMenu(Y.Menu.buildFromTemplate(s))}' +
+      'function createWindow(){r.webContents.on("did-finish-load",()=>{me("[window] Renderer finished loading")})}';
+    fs.writeFileSync(path.join(buildDir, "index-WindowR.js"), bundleContent);
+    const asarPath = path.join(tmpDir, "app.asar");
+    await asar.createPackage(tmpDir, asarPath);
+
+    const result = await patchAboutPanel({ asarPath });
+    const patchedContent = asar
+      .extractFile(asarPath, ".vite/build/index-WindowR.js")
+      .toString("utf-8");
+    const chipSource = patchedContent.slice(
+      patchedContent.indexOf("/* linux-visible-version-chip-patch */"),
+    );
+
+    expect(result.success).toBe(true);
+    expect(chipSource).toContain("let appRoot=p.dirname(process.execPath)");
+    expect(chipSource).toContain("r.webContents.executeJavaScript");
+    expect(chipSource).not.toContain("let r=p.dirname(process.execPath)");
+  });
+
   it("skips already-patched bundles", async () => {
     /* eslint-disable @typescript-eslint/no-var-requires */
     const asar = require("@electron/asar");
@@ -313,9 +356,11 @@ describe("patchAboutPanel", () => {
       'const parts=["Factory "+v];if(b.droidVersion)parts.push("Droid "+b.droidVersion);const text=parts.join(" · ");';
     const oldTimerCleanup =
       'if(!_t.__factoryLinuxVersionChipTimer){_t.__factoryLinuxVersionChipTimer=setInterval(render,5000);_t.on("closed",()=>{clearInterval(_t.__factoryLinuxVersionChipTimer);_t.__factoryLinuxVersionChipTimer=null})}';
+    const oldShadowedAppRoot =
+      'const p=require("path"),f=require("fs"),os=require("os");let r=p.dirname(process.execPath);if(f.existsSync(p.join(r,".factory-linux","build-info.json"))===false)r=p.dirname(p.dirname(process.execPath));let b={};try{b=JSON.parse(f.readFileSync(p.join(r,".factory-linux","build-info.json"),"utf-8"))}catch(e){}';
     const patchedContent =
       'function gu(){detail:(()=>{/* linux-about-panel-patch */try{const v=Y.app.getVersion();return v}catch(e){}})()}' +
-      `function createWindow(){_t.webContents.on("did-finish-load",()=>{/* linux-visible-version-chip-patch */${oldChipText}e.style.cssText='${oldChipStyle}';${oldTimerCleanup}})}`;
+      `function createWindow(){r.webContents.on("did-finish-load",()=>{/* linux-visible-version-chip-patch */${oldShadowedAppRoot}${oldChipText}e.style.cssText='${oldChipStyle}';${oldTimerCleanup}})}`;
     fs.writeFileSync(
       path.join(buildDir, "index-OldChipPosition.js"),
       patchedContent,
@@ -350,6 +395,12 @@ describe("patchAboutPanel", () => {
     expect(migratedContent).toContain("top:40px");
     expect(migratedContent).toContain("min-width:220px");
     expect(migratedContent).toContain("Factory Desktop update available");
+    expect(migratedContent).toContain(
+      "let appRoot=p.dirname(process.execPath)",
+    );
+    expect(migratedContent).not.toContain(
+      "let r=p.dirname(process.execPath)",
+    );
     expect(migratedContent).not.toContain("System Droid CLI");
     expect(migratedContent).not.toContain('parts.join(" · ")');
     expect(migratedContent).not.toContain(
