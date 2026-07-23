@@ -2795,13 +2795,29 @@ program
             fs.copyFileSync(srcFile, path.join(builderStagingDir, file));
           }
         }
-        // Prune devDependencies from the staged node_modules to reduce
-        // the .deb size. The builder only needs runtime deps (electron,
-        // electron-builder, @electron/asar, etc.) for local rebuilds —
-        // not typescript, jest, eslint, etc.
         const stagedNodeModules = path.join(builderStagingDir, "node_modules");
-        if (fs.existsSync(stagedNodeModules) && fs.existsSync(path.join(builderStagingDir, "package.json"))) {
+        const stagedPackageJson = path.join(builderStagingDir, "package.json");
+        const stagedPackageLock = path.join(builderStagingDir, "package-lock.json");
+        if (fs.existsSync(stagedNodeModules) && fs.existsSync(stagedPackageJson)) {
+          const originalPackageJson = fs.readFileSync(stagedPackageJson, "utf-8");
+          const originalPackageLock = fs.existsSync(stagedPackageLock)
+            ? fs.readFileSync(stagedPackageLock, "utf-8")
+            : null;
           try {
+            const installManifest = JSON.parse(originalPackageJson);
+            installManifest.dependencies ??= {};
+            for (const dependency of ["electron", "electron-builder"]) {
+              const version = installManifest.devDependencies?.[dependency];
+              if (typeof version !== "string") {
+                throw new Error(`Missing updater build dependency: ${dependency}`);
+              }
+              installManifest.dependencies[dependency] = version;
+              delete installManifest.devDependencies[dependency];
+            }
+            fs.writeFileSync(
+              stagedPackageJson,
+              JSON.stringify(installManifest, null, 2) + "\n",
+            );
             execSync("npm install --omit=dev", {
               cwd: builderStagingDir,
               stdio: "pipe",
@@ -2809,8 +2825,12 @@ program
             });
             process.stdout.write(`✓ Pruned devDependencies from staged builder bundle\n`);
           } catch {
-            // Non-fatal — the full node_modules will still work, just larger
             process.stdout.write(`⚠ Could not prune devDependencies (non-fatal)\n`);
+          } finally {
+            fs.writeFileSync(stagedPackageJson, originalPackageJson);
+            if (originalPackageLock !== null) {
+              fs.writeFileSync(stagedPackageLock, originalPackageLock);
+            }
           }
         }
       }

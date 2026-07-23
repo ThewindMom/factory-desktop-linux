@@ -70,31 +70,6 @@ export interface ValidateAboutPanelResult {
 
 const PATCH_MARKER = "/* linux-about-panel-patch */";
 const CHIP_PATCH_MARKER = "/* linux-visible-version-chip-patch */";
-const OLD_CHIP_STYLE_CSS =
-  "position:fixed;right:12px;bottom:10px;z-index:2147483647;border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:4px 8px;background:rgba(20,20,20,.78);color:rgba(255,255,255,.72);font:11px/1.2 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;backdrop-filter:blur(8px);box-shadow:0 4px 16px rgba(0,0,0,.18);pointer-events:none;user-select:none;";
-const OLD_TOP_CHIP_STYLE_CSS =
-  "position:fixed;right:16px;top:44px;z-index:2147483647;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 9px;background:rgba(20,20,20,.86);color:rgba(255,255,255,.78);font:11px/1.2 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;backdrop-filter:blur(8px);box-shadow:0 6px 18px rgba(0,0,0,.22);pointer-events:none;user-select:none;";
-const CHIP_STYLE_CSS =
-  "position:fixed;left:16px;top:40px;z-index:2147483647;min-width:220px;border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:10px 12px;background:rgba(18,18,18,.94);color:rgba(255,255,255,.9);font:12px/1.45 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:.01em;font-variant-numeric:tabular-nums;text-align:left;backdrop-filter:blur(12px);box-shadow:0 12px 32px rgba(0,0,0,.34),0 1px 0 rgba(255,255,255,.06) inset;pointer-events:auto;user-select:none;";
-const CHIP_CLOSE_BUTTON_CSS =
-  "position:absolute;right:6px;top:5px;width:22px;height:22px;border:0;border-radius:999px;background:transparent;color:rgba(255,255,255,.62);font:16px/22px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;cursor:pointer;padding:0;";
-const CHIP_UPDATE_BUTTON_CSS =
-  "margin-top:9px;width:100%;border:1px solid rgba(255,255,255,.22);border-radius:10px;padding:7px 10px;background:rgba(255,255,255,.92);color:rgba(18,18,18,.96);font:600 12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;cursor:pointer;";
-const OLD_CHIP_FACTORY_LABEL = 'const parts=["Factory "+v];';
-const CHIP_FACTORY_LABEL = 'const parts=["Factory Desktop update available"];';
-const OLD_CHIP_DROID_LABEL =
-  'if(b.droidVersion)parts.push("Droid "+b.droidVersion);';
-const CHIP_DROID_LABEL = "";
-const OLD_CHIP_TEXT_JOIN = 'const text=parts.join(" · ");';
-const CHIP_TEXT_JOIN = 'const text=parts.join("\\n");';
-const OLD_CHIP_APP_ROOT =
-  'const p=require("path"),f=require("fs"),os=require("os");let r=p.dirname(process.execPath);if(f.existsSync(p.join(r,".factory-linux","build-info.json"))===false)r=p.dirname(p.dirname(process.execPath));let b={};try{b=JSON.parse(f.readFileSync(p.join(r,".factory-linux","build-info.json"),"utf-8"))}catch(e){}';
-const CHIP_APP_ROOT =
-  'const p=require("path"),f=require("fs"),os=require("os");let appRoot=p.dirname(process.execPath);if(f.existsSync(p.join(appRoot,".factory-linux","build-info.json"))===false)appRoot=p.dirname(p.dirname(process.execPath));let b={};try{b=JSON.parse(f.readFileSync(p.join(appRoot,".factory-linux","build-info.json"),"utf-8"))}catch(e){}';
-const OLD_CHIP_TIMER_CLEANUP_REGEX =
-  /if\(!(\w+)\.__factoryLinuxVersionChipTimer\)\{\1\.__factoryLinuxVersionChipTimer=setInterval\(render,5000\);\1\.on\("closed",\(\)=>\{clearInterval\(\1\.__factoryLinuxVersionChipTimer\);\1\.__factoryLinuxVersionChipTimer=null\}\)\}/;
-const SHADOWED_CHIP_TIMER_REGEX =
-  /if\(!(\w+)\.__factoryLinuxVersionChipTimer\)\{const \w+=setInterval\(render,5000\);\1\.__factoryLinuxVersionChipTimer=\w+;\w+\.on\("closed",\(\)=>\{clearInterval\(\w+\)\}\)\}/;
 
 /**
  * Regex matching the existing About Factory dialog's `detail:` template.
@@ -117,9 +92,6 @@ const SHADOWED_CHIP_TIMER_REGEX =
  */
 const ABOUT_DETAIL_REGEX =
   /detail:`Version:\s*\$\{(\w+\.app\.getVersion\(\))\}\nElectron:\s*\$\{process\.versions\.electron\}\nChromium:\s*\$\{process\.versions\.chrome\}\nNode\.js:\s*\$\{process\.versions\.node\}`/;
-const VISIBLE_VERSION_CHIP_REGEX =
-  /(\w+)\.webContents\.on\("did-finish-load",\(\)=>\{([^{}]*?\[window\] Renderer finished loading[^{}]*?)\}\)/;
-const PATCHED_ABOUT_GET_VERSION_REGEX = /const v=(\w+\.app\.getVersion\(\));/;
 
 
 /**
@@ -178,43 +150,6 @@ function buildInjectedDetail(appGetVersionRef: string): string {
     ``
   );
 }
-function buildInjectedVisibleVersionChip(
-  windowRef: string,
-  originalHandlerBody: string,
-  appGetVersionRef: string,
-): string {
-  return (
-    `${windowRef}.webContents.on("did-finish-load",()=>{${originalHandlerBody};` +
-    `(()=>{${CHIP_PATCH_MARKER}const render=()=>{try{` +
-    `const p=require("path"),f=require("fs"),os=require("os");` +
-    `let appRoot=p.dirname(process.execPath);` +
-    `if(f.existsSync(p.join(appRoot,".factory-linux","build-info.json"))===false)` +
-    `appRoot=p.dirname(p.dirname(process.execPath));` +
-    `let b={};try{b=JSON.parse(f.readFileSync(p.join(appRoot,".factory-linux","build-info.json"),"utf-8"))}catch(e){}` +
-    `let s={};const sd=process.env.XDG_STATE_HOME||p.join(os.homedir(),".local","state");` +
-    `try{s=JSON.parse(f.readFileSync(p.join(sd,"factory-update-manager","state.json"),"utf-8"))}catch(e){}` +
-    `const v=b.factoryVersion||${appGetVersionRef},cv=s.candidate_version;` +
-    `const ready=s.status==="ready_to_install"||s.status==="waiting_for_app_exit";` +
-    `const preparing=["downloading_dmg","preparing_workspace","building_package","installing"].includes(s.status);` +
-    `const failed=s.status==="failed";` +
-    `const desktopUpdate=!!(cv&&cv!==v);` +
-    `if(!desktopUpdate){const js="(()=>{const e=document.getElementById('factory-linux-version-chip');if(e)e.remove()})()";${windowRef}.webContents.executeJavaScript(js,true).catch(e=>console.error("[factory-linux-update-ui] remove failed",e));return}` +
-    `let headline=failed?"Factory Desktop update failed":ready?"Factory Desktop update ready":preparing?"Preparing Factory Desktop update":"Factory Desktop update available";` +
-    `const parts=[headline,"Current "+v,"Latest "+cv];` +
-    `if(failed){parts.push("Could not prepare update");if(s.error_message)parts.push(String(s.error_message).slice(0,160))}else if(ready)parts.push("Install when Factory is closed");else if(preparing)parts.push("Preparing update package");else parts.push("Run update check to prepare it");` +
-    `const action=ready?"install-ready":"check-now";` +
-    `const payload={text:parts,action,cta:failed?"Retry":"Update",version:cv,status:s.status||"available"};` +
-    `const js="(()=>{const d="+JSON.stringify(payload)+";const hiddenKey=d.version+':'+d.status;if(sessionStorage.getItem('factory-linux-version-panel-hidden')===hiddenKey)return;let e=document.getElementById('factory-linux-version-chip');` +
-    `if(!e){e=document.createElement('div');e.id='factory-linux-version-chip';e.setAttribute('role','status');e.setAttribute('aria-label','Factory Desktop update status');e.style.cssText='${CHIP_STYLE_CSS}';` +
-    `const c=document.createElement('button');c.type='button';c.setAttribute('aria-label','Hide update status');c.textContent='×';c.style.cssText='${CHIP_CLOSE_BUTTON_CSS}';c.onclick=()=>{sessionStorage.setItem('factory-linux-version-panel-hidden',hiddenKey);e.remove()};e.appendChild(c);` +
-    `const body=document.createElement('div');body.id='factory-linux-version-chip-body';body.style.cssText='padding-right:18px;white-space:pre-line;text-wrap:balance;';e.appendChild(body);` +
-    `const btn=document.createElement('button');btn.type='button';btn.id='factory-linux-version-update';btn.style.cssText='${CHIP_UPDATE_BUTTON_CSS}';btn.textContent=d.cta||'Update';btn.onclick=()=>{window.__factoryLinuxUpdateRequest=d.action;btn.textContent='Starting...'};e.appendChild(btn);document.body.appendChild(e)}` +
-    `const body=e.querySelector('#factory-linux-version-chip-body');if(body)body.textContent=d.text.join('\\\\n');const code=e.querySelector('#factory-linux-version-command');if(code)code.remove();const btn=e.querySelector('#factory-linux-version-update');if(btn){btn.style.display=d.action?'block':'none';if(d.action)btn.textContent=d.cta||'Update'}const req=window.__factoryLinuxUpdateRequest||'';window.__factoryLinuxUpdateRequest='';return req})()";` +
-    `${windowRef}.webContents.executeJavaScript(js,true).then((req)=>{if(req==="install-ready"||req==="check-now"){try{require("child_process").spawn("factory-update-manager",[req],{detached:true,stdio:"ignore"}).unref();if(req==="install-ready")setTimeout(()=>{try{require("electron").app.quit()}catch(e){console.error("[factory-linux-update-ui] quit failed",e)}},500)}catch(e){console.error("[factory-linux-update-ui] action failed",e)}}}).catch(e=>console.error("[factory-linux-update-ui] render failed",e))` +
-    `}catch(e){console.error("[factory-linux-update-ui] state refresh failed",e)}};render();if(!${windowRef}.__factoryLinuxVersionChipTimer){const timer=setInterval(render,5000);${windowRef}.__factoryLinuxVersionChipTimer=timer;${windowRef}.on("closed",()=>{clearInterval(timer)})}})()})`
-  );
-}
-
 // ─── Core Patching Functions ────────────────────────────────────────────────
 
 export async function patchAboutPanel(
@@ -281,102 +216,22 @@ export async function patchAboutPanel(
       .extractFile(options.asarPath, bundleFile)
       .toString("utf-8");
 
-    if (
-      skipIfPatched &&
-      content.includes(PATCH_MARKER) &&
-      content.includes(CHIP_PATCH_MARKER)
-    ) {
-      let patchedContent = content;
-      let migrated = false;
-      const oldChipStyle = [OLD_CHIP_STYLE_CSS, OLD_TOP_CHIP_STYLE_CSS].find(
-        (style) => patchedContent.includes(style),
-      );
-      if (oldChipStyle) {
-        patchedContent = patchedContent.replace(oldChipStyle, CHIP_STYLE_CSS);
-        migrated = true;
-      }
-      for (const [oldSnippet, newSnippet] of [
-        [OLD_CHIP_FACTORY_LABEL, CHIP_FACTORY_LABEL],
-        [OLD_CHIP_DROID_LABEL, CHIP_DROID_LABEL],
-        [OLD_CHIP_TEXT_JOIN, CHIP_TEXT_JOIN],
-        [OLD_CHIP_APP_ROOT, CHIP_APP_ROOT],
-      ] as const) {
-        if (patchedContent.includes(oldSnippet)) {
-          patchedContent = patchedContent.replace(oldSnippet, newSnippet);
-          migrated = true;
-        }
-      }
-      const oldTimerCleanupMatch = patchedContent.match(
-        OLD_CHIP_TIMER_CLEANUP_REGEX,
-      );
-      const timerWindowRef = oldTimerCleanupMatch?.[1];
-      if (timerWindowRef) {
-        patchedContent = patchedContent.replace(
-          OLD_CHIP_TIMER_CLEANUP_REGEX,
-          `if(!${timerWindowRef}.__factoryLinuxVersionChipTimer){` +
-            `const timer=setInterval(render,5000);` +
-            `${timerWindowRef}.__factoryLinuxVersionChipTimer=timer;` +
-            `${timerWindowRef}.on("closed",()=>{clearInterval(timer)})}`,
-        );
-        migrated = true;
-      }
-      const shadowedTimerMatch = patchedContent.match(SHADOWED_CHIP_TIMER_REGEX);
-      const shadowedTimerWindowRef = shadowedTimerMatch?.[1];
-      if (shadowedTimerWindowRef) {
-        patchedContent = patchedContent.replace(
-          SHADOWED_CHIP_TIMER_REGEX,
-          `if(!${shadowedTimerWindowRef}.__factoryLinuxVersionChipTimer){` +
-            `const timer=setInterval(render,5000);` +
-            `${shadowedTimerWindowRef}.__factoryLinuxVersionChipTimer=timer;` +
-            `${shadowedTimerWindowRef}.on("closed",()=>{clearInterval(timer)})}`,
-        );
-        migrated = true;
-      }
-      if (migrated) {
-        try {
-          await applyAsarContentPatch(
-            options.asarPath,
-            bundleFile,
-            patchedContent,
-          );
-          totalPatchCount += 1;
-          patches.push({
-            id: "linux-visible-version-chip-prominence",
-            description:
-              "Update the visible frontend version/status chip and close " +
-              "handler for current Linux behavior",
-            originalSnippet: oldChipStyle ?? "legacy visible chip text",
-            replacementSnippet: CHIP_STYLE_CSS,
-          });
-        } catch (err) {
-          errors.push(
-            `Failed to update visible chip prominence in ${bundleFile}: ${String(err)}`,
-          );
-        }
-      } else {
-        alreadyPatched = true;
-        warnings.push(`Bundle ${bundleFile} is already patched. Skipping.`);
-      }
+    if (skipIfPatched && content.includes(PATCH_MARKER)) {
+      alreadyPatched = true;
+      warnings.push(`Bundle ${bundleFile} is already patched. Skipping.`);
       continue;
     }
 
-    if (
-      !content.includes('Version: ${') &&
-      !content.includes('did-finish-load')
-    ) {
+    if (!content.includes('Version: ${')) {
       continue;
     }
 
     const aboutMatch = content.match(ABOUT_DETAIL_REGEX);
-    const patchedAboutMatch = content.match(PATCHED_ABOUT_GET_VERSION_REGEX);
-    if (
-      (!aboutMatch || aboutMatch.index === undefined) &&
-      (!patchedAboutMatch || patchedAboutMatch.index === undefined)
-    ) {
+    if (!aboutMatch || aboutMatch.index === undefined) {
       continue;
     }
 
-    const appGetVersionRef = aboutMatch?.[1] ?? patchedAboutMatch?.[1] ?? "";
+    const appGetVersionRef = aboutMatch[1] ?? "";
     let patchedContent = content;
     const pendingPatches: AboutPanelNeedle[] = [];
 
@@ -400,34 +255,6 @@ export async function patchAboutPanel(
           `detail:(runtime IIFE reading build-info.json + state.json, ` +
           `fallback: ${appGetVersionRef})`,
       });
-    }
-
-    const chipMatch = patchedContent.match(VISIBLE_VERSION_CHIP_REGEX);
-    if (chipMatch && chipMatch.index !== undefined) {
-      const chipResult: RegexPatchResult = applyRegexPatch(
-        patchedContent,
-        VISIBLE_VERSION_CHIP_REGEX,
-        (_full, windowRef, originalHandlerBody) => {
-          return buildInjectedVisibleVersionChip(
-            windowRef,
-            originalHandlerBody,
-            appGetVersionRef,
-          );
-        },
-      );
-
-      if (chipResult.matched) {
-        patchedContent = chipResult.content;
-        pendingPatches.push({
-          id: "linux-visible-version-chip",
-          description:
-            "Inject a small visible frontend version/status chip after the " +
-            "renderer finishes loading",
-          originalSnippet: chipMatch[0],
-          replacementSnippet:
-            "webContents did-finish-load handler with version chip injection",
-        });
-      }
     }
 
     if (pendingPatches.length === 0) continue;
@@ -537,8 +364,8 @@ export function validateAboutPanel(
   if (!aboutPanelPatched) {
     errors.push("About dialog version patch marker not found.");
   }
-  if (!visibleVersionChipPatched) {
-    errors.push("Visible frontend version chip patch marker not found.");
+  if (visibleVersionChipPatched) {
+    errors.push("Deprecated visible frontend update chip is still present.");
   }
 
   const valid = errors.length === 0;

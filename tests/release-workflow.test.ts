@@ -59,6 +59,23 @@ describe("release automation contract", () => {
     expect(cli).toContain('for (const dir of ["dist", "node_modules", "src", "assets", "packaging"])');
   });
 
+  it("retains the Electron build runtime when pruning updater dependencies", () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "package.json"), "utf-8"),
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
+
+    expect(manifest.devDependencies?.electron).toBeDefined();
+    expect(manifest.devDependencies?.["electron-builder"]).toBeDefined();
+    expect(cli).toContain('["electron", "electron-builder"]');
+    expect(cli).toContain("installManifest.dependencies[dependency] = version");
+    expect(cli).toContain("delete installManifest.devDependencies[dependency]");
+    expect(cli).toContain("fs.writeFileSync(stagedPackageJson, originalPackageJson)");
+  });
+
   it("preserves the installed port SHA during updater-driven rebuilds", () => {
     const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
     const builder = fs.readFileSync(path.join(repoRoot, "updater", "src", "builder.rs"), "utf-8");
