@@ -77,6 +77,15 @@ describe("release automation contract", () => {
     expect(cli).toContain("fs.writeFileSync(stagedPackageJson, originalPackageJson)");
   });
 
+  it("keeps the staged 7zip compressor executable for updater rebuilds", () => {
+    const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
+
+    expect(cli).toMatch(
+      /path\.join\(\s*stagedNodeModules,\s*"7zip-bin",\s*"linux",\s*"x64",\s*"7za",?\s*\)/,
+    );
+    expect(cli).toContain("fs.chmodSync(staged7za, 0o755)");
+  });
+
   it("preserves the installed port SHA during updater-driven rebuilds", () => {
     const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
     const builder = fs.readFileSync(path.join(repoRoot, "updater", "src", "builder.rs"), "utf-8");

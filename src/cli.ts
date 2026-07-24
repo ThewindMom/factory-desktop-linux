@@ -2824,6 +2824,16 @@ program
               stdio: "pipe",
               timeout: 120000,
             });
+            const staged7za = path.join(
+              stagedNodeModules,
+              "7zip-bin",
+              "linux",
+              "x64",
+              "7za",
+            );
+            if (fs.existsSync(staged7za)) {
+              fs.chmodSync(staged7za, 0o755);
+            }
             process.stdout.write(`✓ Pruned devDependencies from staged builder bundle\n`);
           } catch {
             process.stdout.write(`⚠ Could not prune devDependencies (non-fatal)\n`);
