@@ -57,6 +57,7 @@ describe("release automation contract", () => {
     const cli = fs.readFileSync(path.join(repoRoot, "src", "cli.ts"), "utf-8");
 
     expect(cli).toContain('for (const dir of ["dist", "node_modules", "src", "assets", "packaging"])');
+    expect(cli).toContain("verbatimSymlinks: true");
   });
 
   it("retains the Electron build runtime when pruning updater dependencies", () => {

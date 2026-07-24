@@ -2780,6 +2780,7 @@ program
           if (fs.existsSync(srcDir)) {
             fs.cpSync(srcDir, path.join(builderStagingDir, dir), {
               recursive: true,
+              verbatimSymlinks: true,
               filter: (source) => {
                 if (dir !== "dist") return true;
                 return !/\.(deb|rpm|AppImage|blockmap|ya?ml|sha256)$/i.test(
