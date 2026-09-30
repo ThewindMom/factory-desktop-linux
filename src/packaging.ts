@@ -627,6 +627,11 @@ export function createElectronBuilderConfig(options: PackageBuildOptions, projec
       executableName: options.execName,
       category: "Development",
       icon: options.iconPath || undefined,
+      // electron-builder installs the URL-scheme handler from this top-level
+      // option. A MimeType key inside the `desktop` block below is silently
+      // dropped by electron-builder, which left shipped packages without a
+      // handler for factory-desktop:// deep links (breaks browser sign-in).
+      mimeTypes: ["x-scheme-handler/factory-desktop"],
       desktop: options.desktopEntryPath ? undefined : {
         Name: options.appName,
         Comment: "Factory AI Desktop",
