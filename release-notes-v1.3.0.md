@@ -63,6 +63,15 @@ sha256sum -c checksums.txt
   on Linux instead of the generated monochrome menu-bar glyph. Both artifacts
   were rebuilt with these fixes and replace the original 1.3.0 uploads.
 
+## Update notifications
+
+Update toasts are **off by default** (revision 3). They previously fired for
+builds already installed, which was misleading; updates here are manual — from
+this release page or from the repository. Set `FACTORY_UPDATE_NOTIFICATIONS=1`
+in the desktop's environment to turn them back on. The scheduled workflow also
+rebuilds the `.deb` on every run and replaces these assets, so the download is
+always a current build.
+
 ## Reaching the web app
 
 The web app at [app.factory.ai](https://app.factory.ai) talks to the daemon on
