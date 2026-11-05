@@ -51,20 +51,16 @@ jobs:
           echo "Upstream latest version: $LATEST"
           echo "latest_version=$LATEST" >> $GITHUB_OUTPUT
 
-          # Check if we already have a release for this version
-          if gh release view "v$LATEST" --repo ${{ github.repository }} >/dev/null 2>&1; then
-            echo "Release v$LATEST already exists. Skipping build."
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          else
-            echo "New version $LATEST detected. Will build."
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          fi
+          # Always build: every run produces a fresh .deb (and AppImage).
+          # When the release already exists, the release step replaces its
+          # assets with --clobber instead of skipping the build.
+          echo "Building Linux packages for $LATEST."
+          echo "should_build=true" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-release:
     needs: check-and-release
-    if: github.event_name != 'schedule' || needs.check-and-release.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:

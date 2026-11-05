@@ -56,9 +56,15 @@ Current release: [`v1.3.0`](https://github.com/seelvupledevelop/factory-desktop-
 ## Automatic builds
 
 This fork checks Factory's upstream version **daily at 08:00 UTC** and
-automatically builds and publishes a new Linux release (`.deb`, `.AppImage`,
-and SHA-256 checksums) whenever Factory ships a new Desktop version — no
-manual step needed. Builds are free GitHub Actions runs on this public
+builds a fresh `.deb` (plus `.AppImage` and SHA-256 checksums) on **every**
+run — no manual step needed. When a release for that version already exists,
+the new assets replace the old ones in place, so the download is always a
+current build.
+
+Automatic update notifications are **off by default**: updates are applied
+manually from this repository or from GitHub, so the app no longer raises
+"update available" toasts (set `FACTORY_UPDATE_NOTIFICATIONS=1` in the
+desktop's environment to turn them back on). Builds are free GitHub Actions runs on this public
 repository. You can also trigger a build manually from the **Actions** tab
 (*Release → Run workflow*) or with:
 
