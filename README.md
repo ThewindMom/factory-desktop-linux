@@ -7,8 +7,8 @@
 > [factory.ai](https://factory.ai) and the channels Factory operates. Use this
 > port at your own risk.
 
-> **✅ Latest package: [`v1.1.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.1.0)**
-> (`factory-desktop_1.1.0_amd64.deb` + `Factory-1.1.0.AppImage`), built from the official **Factory Desktop 1.1.0** macOS DMG fetched from Factory's desktop endpoint. The assembled payload was verified locally: `sha256sum -c checksums.txt` passes, `dpkg-deb --info` reports `Version: 1.1.0` / `amd64`, the daemon-transport and system-droid asar patches are present, no droid binary is bundled in `resources/`, and the `factory-desktop://` scheme handler is registered. Runs on Linux Mint (x64). Earlier releases (≤ v0.185.0) shipped without the URL-scheme handler and could not complete browser sign-in. Checksums ship with the release.
+> **✅ Latest package: [`v1.3.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.3.0)**
+> (`factory-desktop_1.3.0_amd64.deb` + `Factory-1.3.0.AppImage`), built from the official **Factory Desktop 1.3.0** macOS DMG fetched from Factory's desktop endpoint. The assembled payload was verified locally: `sha256sum -c checksums.txt` passes, `dpkg-deb --info` reports `Version: 1.3.0` / `amd64`, the daemon-transport and system-droid asar patches are present, no droid binary is bundled in `resources/`, and the `factory-desktop://` scheme handler is registered. Installed over 1.1.0, the app registers as `version: 1.3.0` and its daemon answers `factory-daemon ok` on `127.0.0.1:37643` with the matching `droid` CLI 1.3.0. Runs on Linux Mint (x64). Earlier releases (≤ v0.185.0) shipped without the URL-scheme handler and could not complete browser sign-in. Checksums ship with the release.
 
 Factory Desktop running natively on Linux, with `.deb`, `.rpm`, and AppImage
 packages built from Factory's official Desktop release.
@@ -19,30 +19,35 @@ affiliated with or supported by Factory.
 
 ## Download
 
-Current release: [`v1.1.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.1.0)
+Current release: [`v1.3.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.3.0)
 
 | Package | Download |
 |---|---|
-| Debian / Ubuntu / Mint (amd64) | [`factory-desktop_1.1.0_amd64.deb`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.1.0/factory-desktop_1.1.0_amd64.deb) |
-| Portable AppImage (x86_64) | [`Factory-1.1.0.AppImage`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.1.0/Factory-1.1.0.AppImage) |
-| SHA-256 checksums | [`checksums.txt`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.1.0/checksums.txt) |
+| Debian / Ubuntu / Mint (amd64) | [`factory-desktop_1.3.0_amd64.deb`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.3.0/factory-desktop_1.3.0_amd64.deb) |
+| Portable AppImage (x86_64) | [`Factory-1.3.0.AppImage`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.3.0/Factory-1.3.0.AppImage) |
+| SHA-256 checksums | [`checksums.txt`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.3.0/checksums.txt) |
 
-## What changed in 1.1.0
+## What changed in 1.3.0
 
-- **Daemon port 37643 fixed.** On 0.208.0 and earlier the daemon could fail to
-  serve `127.0.0.1:37643`, leaving Factory Desktop and the web app without a
-  session backend. The 1.1.0 package forces WebSocket transport and comes up
-  healthy: `curl -s 127.0.0.1:37643/health` returns `factory-daemon ok`, and the
-  startup tracker reports `outcome: "healthy"` with the daemon ready on port
-  37643.
-- **HTTP 400 "Unknown model" fixed.** Desktop 1.1.0 and the `droid` CLI 1.1.0
-  share the same model catalog, so sending a message no longer fails with
-  `400 status code (no body)` / `Unknown model` when the desktop is newer than
-  the installed CLI.
-- **Rebuilt from the official 1.1.0 DMG**, including its archive-root
-  `Factory.app` layout.
-- **Browser sign-in** still uses the registered `factory-desktop://` scheme
-  handler, and the package still bundles no droid binary.
+- **Rebuilt from the official 1.3.0 DMG**
+  (`Factory-1.3.0-x64.dmg`), with the Linux packaging patches re-applied to the
+  1.3.0 app bundle.
+- **Keep the CLI on the same version.** The daemon runs the system `droid` CLI,
+  so update it with the desktop:
+
+  ```bash
+  droid update --version 1.3.0
+  ```
+
+  A desktop that is newer than the CLI is what produced the old
+  `400 status code (no body)` / `Unknown model` failures.
+- **Daemon port 37643 works.** The package keeps the forced WebSocket transport,
+  so `curl -s 127.0.0.1:37643/health` returns `factory-daemon ok` a few seconds
+  after launch; earlier builds (0.208.0 and before) could leave that port
+  without a live daemon.
+- **Verified end to end:** installed over 1.1.0, registered as `version: 1.3.0`,
+  `droid doctor` all checks passed, `factory-desktop://` handler registered, no
+  droid binary bundled.
 
 ## Automatic builds
 
