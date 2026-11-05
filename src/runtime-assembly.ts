@@ -417,6 +417,24 @@ export async function assembleLinuxRuntime(
   const destAsarPath = path.join(resourcesDir, "app.asar");
   fs.copyFileSync(options.asarPath, destAsarPath);
 
+  // Step 4b: Tray icon assets. The Linux tray-icon patch loads the logo from
+  // process.resourcesPath, so the files must sit next to app.asar. They are
+  // copied here because electron-builder runs with --prepackaged during
+  // packaging, which skips its own extraResources step.
+  const trayAssetDir = path.resolve(__dirname, "..", "packaging", "linux");
+  for (const trayAsset of [
+    "factory-tray.png",
+    "factory-tray@2x.png",
+    "factory-icon.png",
+  ]) {
+    const traySource = path.join(trayAssetDir, trayAsset);
+    if (fs.existsSync(traySource)) {
+      fs.copyFileSync(traySource, path.join(resourcesDir, trayAsset));
+    } else {
+      warnings.push(`Tray icon asset missing: ${traySource}`);
+    }
+  }
+
   // Step 4a: Copy app.asar.unpacked (unpacked native modules) if a source
   // directory was supplied. Electron loads unpacked entries from this
   // sibling directory at runtime, and the patch registry's repack step

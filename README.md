@@ -48,6 +48,10 @@ Current release: [`v1.3.0`](https://github.com/seelvupledevelop/factory-desktop-
 - **Verified end to end:** installed over 1.1.0, registered as `version: 1.3.0`,
   `droid doctor` all checks passed, `factory-desktop://` handler registered, no
   droid binary bundled.
+- **Factory icon in the panel and tray.** `BrowserWindow` now receives an
+  explicit `icon`, so the taskbar/window button shows Factory's logo instead of
+  the generic window glyph, and the tray returns the packaged icon on Linux
+  instead of the generated monochrome menu-bar glyph.
 
 ## Automatic builds
 

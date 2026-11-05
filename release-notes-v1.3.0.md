@@ -57,6 +57,11 @@ sha256sum -c checksums.txt
   certificate-cache warnings from the local profile).
 - **Packaging unchanged:** both asar patches present, no bundled droid binary,
   `factory-desktop://` scheme handler registered, ELF x86-64 `keytar.node`.
+- **Factory icon in the panel and tray (revision 2).** `BrowserWindow` now sets
+  an explicit `icon`, so the Linux taskbar/window button shows Factory's logo
+  rather than the generic window glyph, and the tray returns the packaged icon
+  on Linux instead of the generated monochrome menu-bar glyph. Both artifacts
+  were rebuilt with these fixes and replace the original 1.3.0 uploads.
 
 ## Reaching the web app
 
