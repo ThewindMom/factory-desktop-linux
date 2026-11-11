@@ -25,6 +25,8 @@ import { enforceSafeMode, describeReleaseMode } from "./safe-mode";
 import { assertRequiredTools, checkAllTools, REQUIRED_TOOLS } from "./tool-check";
 import { resolveVersion, isValidSemver, LATEST_VERSION_URL } from "./version-discovery";
 import {
+  detectDmgAppPrefix,
+  dmgContentPathFor,
   extractDmgPayload,
   verifyDeterministicExtraction,
   formatExtractionResult,
@@ -507,7 +509,7 @@ program
       {
         const droidInDmg = path.join(
           extractDir,
-          "Factory/Factory.app/Contents/Resources/bin/droid"
+          dmgContentPathFor(detectDmgAppPrefix(options.dmg), "droidBinary")
         );
 
         if (fs.existsSync(droidInDmg)) {
@@ -855,6 +857,60 @@ program
       ensureGeneratedDirs(dirs);
       tracker.track(outputDir, "Packaging output");
 
+      // Catch-up staging for the updater binary. electron-builder's
+      // --prepackaged mode ignores extraFiles, so the Rust binary must be
+      // physically present in the app dir. It is missing when build-all ran
+      // before 'make package' built the updater (or when the updater was
+      // built with an overridden CARGO_TARGET_DIR), so copy it in here.
+      if (process.env.PACKAGE_WITH_UPDATER !== "0") {
+        const updaterBinary = path.join(
+          process.cwd(),
+          "updater",
+          "target",
+          "release",
+          "factory-update-manager"
+        );
+        const updaterDest = path.join(
+          appDir,
+          ".factory-linux",
+          "updater",
+          "factory-update-manager"
+        );
+        if (fs.existsSync(updaterBinary) && !fs.existsSync(updaterDest)) {
+          fs.mkdirSync(path.dirname(updaterDest), { recursive: true });
+          fs.copyFileSync(updaterBinary, updaterDest);
+          fs.chmodSync(updaterDest, 0o755);
+          process.stdout.write(
+            `✓ Staged updater binary into app dir (was missing)\n`
+          );
+        }
+      }
+
+      // Catch-up staging for the packaged uninstaller (same --prepackaged
+      // constraint as the updater binary above).
+      {
+        const uninstallerSrc = path.join(process.cwd(), "packaging", "linux", "factory-uninstall.sh");
+        const uninstallerDest = path.join(appDir, ".factory-linux", "updater", "factory-uninstall.sh");
+        if (fs.existsSync(uninstallerSrc) && !fs.existsSync(uninstallerDest)) {
+          fs.mkdirSync(path.dirname(uninstallerDest), { recursive: true });
+          fs.copyFileSync(uninstallerSrc, uninstallerDest);
+          fs.chmodSync(uninstallerDest, 0o755);
+          process.stdout.write(`✓ Staged uninstaller into app dir (was missing)\n`);
+        }
+      }
+
+      // Catch-up staging for the home-repair helper (same constraint).
+      {
+        const repairHomeSrc = path.join(process.cwd(), "packaging", "linux", "factory-repair-home.sh");
+        const repairHomeDest = path.join(appDir, ".factory-linux", "updater", "factory-repair-home.sh");
+        if (fs.existsSync(repairHomeSrc) && !fs.existsSync(repairHomeDest)) {
+          fs.mkdirSync(path.dirname(repairHomeDest), { recursive: true });
+          fs.copyFileSync(repairHomeSrc, repairHomeDest);
+          fs.chmodSync(repairHomeDest, 0o755);
+          process.stdout.write(`✓ Staged home-repair helper into app dir (was missing)\n`);
+        }
+      }
+
       // Step 1: Build packages
       const buildResult = buildPackages({
         appDir,
@@ -1172,8 +1228,8 @@ program
   )
   .option(
     "--electron-version <version>",
-    "Electron version to use (default: 39.2.7)",
-    "39.2.7"
+    "Electron version to use (default: 42.3.3, matched to the app)",
+    "42.3.3"
   )
   .option(
     "--app-name <name>",
@@ -1183,6 +1239,10 @@ program
   .option(
     "--output-dir <dir>",
     "Output directory for the assembled app (default: build/)"
+  )
+  .option(
+    "--unpacked-dir <path>",
+    "Source directory for app.asar.unpacked (native modules)"
   )
   .option(
     "--electron-dist <path>",
@@ -1258,6 +1318,7 @@ program
         electronVersion: options.electronVersion,
         appName: options.appName,
         electronDistOverride: options.electronDist,
+        unpackedDirSource: options.unpackedDir,
       });
 
       // Display results
@@ -2503,8 +2564,8 @@ program
   )
   .option(
     "--electron-version <version>",
-    "Electron version to use (default: 39.2.7)",
-    "39.2.7"
+    "Electron version to use (default: 42.3.3, matched to the app)",
+    "42.3.3"
   )
   .option(
     "--app-name <name>",
@@ -2640,7 +2701,7 @@ program
       const asarHash = extractResult.asarHash!;
       const icnsPath = path.join(
         extractDir,
-        "Factory/Factory.app/Contents/Resources/electron.icns"
+        dmgContentPathFor(detectDmgAppPrefix(options.dmg), "electronIcns")
       );
 
       process.stdout.write(`✓ Extracted app.asar: ${asarPath}\n`);
@@ -2693,6 +2754,7 @@ program
         outputDir: dirs.build,
         electronVersion: options.electronVersion,
         appName: options.execName,
+        unpackedDirSource: extractResult.unpackedDir,
       });
 
       if (!assembleResult.success) {
@@ -2746,6 +2808,21 @@ program
         fs.copyFileSync(droidServiceFile, path.join(updaterStagingDir, "factory-droid-daemon.service"));
       }
 
+      // Packaged uninstaller — postinst installs it as /usr/bin/factory-uninstall.
+      const uninstallerFile = path.join(projectRoot, "packaging", "linux", "factory-uninstall.sh");
+      if (fs.existsSync(uninstallerFile)) {
+        fs.copyFileSync(uninstallerFile, path.join(updaterStagingDir, "factory-uninstall.sh"));
+        fs.chmodSync(path.join(updaterStagingDir, "factory-uninstall.sh"), 0o755);
+      }
+
+      // Home-ownership repair helper — postinst installs it as
+      // /usr/bin/factory-repair-home; the daemon unit runs it as ExecStartPre.
+      const repairHomeFile = path.join(projectRoot, "packaging", "linux", "factory-repair-home.sh");
+      if (fs.existsSync(repairHomeFile)) {
+        fs.copyFileSync(repairHomeFile, path.join(updaterStagingDir, "factory-repair-home.sh"));
+        fs.chmodSync(path.join(updaterStagingDir, "factory-repair-home.sh"), 0o755);
+      }
+
       if (process.env.PACKAGE_WITH_UPDATER !== "0") {
 
         // Updater binary
@@ -2774,6 +2851,10 @@ program
         // release artifacts so a previous .deb/.rpm/AppImage never gets
         // embedded inside the next package's update-builder payload.
         const builderStagingDir = path.join(factoryLinuxDir, "update-builder");
+        // Remove any stale staging tree from a previous build first: copying
+        // over an existing node_modules containing .bin symlinks makes
+        // fs.cpSync fail with ERR_FS_CP_EINVAL.
+        fs.rmSync(builderStagingDir, { recursive: true, force: true });
         fs.mkdirSync(builderStagingDir, { recursive: true });
         for (const dir of ["dist", "node_modules", "src", "assets", "packaging"]) {
           const srcDir = path.join(projectRoot, dir);

@@ -21,6 +21,8 @@ import { patchAutoUpdater } from "../auto-updater-patch";
 import { patchWindowControls } from "../window-controls-patch";
 import { patchAboutPanel } from "../about-panel-patch";
 import { patchLinuxNativeUpdater } from "../linux-native-updater-patch";
+import { patchTrayIcon } from "../tray-icon-patch";
+import { patchWindowIcon } from "../window-icon-patch";
 
 // ─── Patch contract ────────────────────────────────────────────────────────
 
@@ -195,6 +197,43 @@ const aboutPanelPatch: Patch = {
     }),
 };
 
+/**
+ * The tray icon patch makes the tray return Factory's packaged logo on Linux
+ * instead of the generated monochrome template glyph, which is drawn for
+ * macOS menu-bar templates and reads as a generic mark on Linux panels.
+ */
+const trayIconPatch: Patch = {
+  id: "tray-icon",
+  description:
+    "Return Factory's packaged logo from the tray glyph factory on Linux " +
+      "instead of the generated monochrome template glyph.",
+  apply: (options) =>
+    patchTrayIcon({
+      asarPath: options.asarPath,
+      skipIfPatched: options.skipIfPatched,
+      tolerateMissingTarget: options.tolerateMissingTarget,
+    }),
+};
+
+/**
+ * The window icon patch sets BrowserWindow's `icon` so the Linux panel and
+ * taskbar button show Factory's logo; without it the window falls back to
+ * the generic window glyph, since `.desktop`'s Icon= does not apply to
+ * running windows.
+ */
+const windowIconPatch: Patch = {
+  id: "window-icon",
+  description:
+    "Set BrowserWindow icon from resources/factory-icon.png so the Linux " +
+      "panel/taskbar shows Factory's logo.",
+  apply: (options) =>
+    patchWindowIcon({
+      asarPath: options.asarPath,
+      skipIfPatched: options.skipIfPatched,
+      tolerateMissingTarget: options.tolerateMissingTarget,
+    }),
+};
+
 /** All registered core patches, in apply order. */
 export const REGISTERED_PATCHES: ReadonlyArray<Patch> = [
   daemonTransportPatch,
@@ -202,6 +241,8 @@ export const REGISTERED_PATCHES: ReadonlyArray<Patch> = [
   linuxNativeUpdaterPatch,
   windowControlsPatch,
   aboutPanelPatch,
+  trayIconPatch,
+  windowIconPatch,
 ];
 
 // ─── Registry entry point ───────────────────────────────────────────────────

@@ -124,7 +124,10 @@ impl RuntimeConfig {
             initial_check_delay_seconds: 30,
             check_interval_hours: 6,
             auto_install_on_app_exit: false,
-            notifications: true,
+            // Update notifications are opt-in: Linux users update manually
+            // (here or from GitHub), and a toast for an already-installed
+            // version is noise. Enable with FACTORY_UPDATE_NOTIFICATIONS=1.
+            notifications: false,
             workspace_root: paths.cache_dir.clone(),
             builder_bundle_root,
             app_executable_path: PathBuf::from("/opt/Factory/factory-desktop"),
@@ -136,14 +139,22 @@ impl RuntimeConfig {
 
     /// Loads the runtime configuration from disk, or returns defaults if missing.
     pub fn load_or_default(paths: &RuntimePaths) -> Result<Self> {
-        if !paths.config_file.exists() {
-            return Ok(Self::default_with_paths(paths));
-        }
+        let mut config = if !paths.config_file.exists() {
+            Self::default_with_paths(paths)
+        } else {
+            let content = fs::read_to_string(&paths.config_file)
+                .with_context(|| format!("Failed to read {}", paths.config_file.display()))?;
+            toml::from_str::<Self>(&content)
+                .with_context(|| format!("Failed to parse {}", paths.config_file.display()))?
+        };
 
-        let content = fs::read_to_string(&paths.config_file)
-            .with_context(|| format!("Failed to read {}", paths.config_file.display()))?;
-        let config = toml::from_str::<Self>(&content)
-            .with_context(|| format!("Failed to parse {}", paths.config_file.display()))?;
+        // Notifications stay off for existing configs too (a stored
+        // `notifications = true` must not keep firing update toasts), unless
+        // the user explicitly opts in through the environment.
+        config.notifications = std::env::var("FACTORY_UPDATE_NOTIFICATIONS")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+
         Ok(config)
     }
 

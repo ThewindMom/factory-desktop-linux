@@ -15,6 +15,10 @@ import { classifyBinary, BinaryType } from "./runtime-classifier";
 import { readAsarPackageMetadata, type AsarPackageMetadata } from "./asar-metadata";
 import type { DaemonTransportPatchResult } from "./daemon-transport-patch";
 import { applyRegisteredPatches } from "./patches/registry";
+import {
+  ensureLinuxNativePrebuilts,
+  detectUnpackedNativeBinaries,
+} from "./native-module-prebuilts";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -28,7 +32,9 @@ export interface RuntimeAssemblyOptions {
   droidPath?: string;
   /** Output directory for the assembled app */
   outputDir: string;
-  /** Electron version to use (default: "39.2.7") */
+  /** Optional source directory for app.asar.unpacked (native modules) */
+  unpackedDirSource?: string;
+  /** Electron version to use (default: "42.3.3", matched to the app) */
   electronVersion: string;
   /** Application name for the executable (default: "factory-desktop") */
   appName: string;
@@ -410,6 +416,66 @@ export async function assembleLinuxRuntime(
 
   const destAsarPath = path.join(resourcesDir, "app.asar");
   fs.copyFileSync(options.asarPath, destAsarPath);
+
+  // Step 4b: Tray icon assets. The Linux tray-icon patch loads the logo from
+  // process.resourcesPath, so the files must sit next to app.asar. They are
+  // copied here because electron-builder runs with --prepackaged during
+  // packaging, which skips its own extraResources step.
+  const trayAssetDir = path.resolve(__dirname, "..", "packaging", "linux");
+  for (const trayAsset of [
+    "factory-tray.png",
+    "factory-tray@2x.png",
+    "factory-icon.png",
+  ]) {
+    const traySource = path.join(trayAssetDir, trayAsset);
+    if (fs.existsSync(traySource)) {
+      fs.copyFileSync(traySource, path.join(resourcesDir, trayAsset));
+    } else {
+      warnings.push(`Tray icon asset missing: ${traySource}`);
+    }
+  }
+
+  // Step 4a: Copy app.asar.unpacked (unpacked native modules) if a source
+  // directory was supplied. Electron loads unpacked entries from this
+  // sibling directory at runtime, and the patch registry's repack step
+  // reads unpacked entries from it as well — so it must exist before
+  // patches run. After copying, replace any macOS native binaries with
+  // hash-verified official Linux prebuilts.
+  if (options.unpackedDirSource && fs.existsSync(options.unpackedDirSource)) {
+    const destUnpackedDir = path.join(resourcesDir, "app.asar.unpacked");
+    copyDirRecursive(options.unpackedDirSource, destUnpackedDir);
+
+    const prebuiltResult = await ensureLinuxNativePrebuilts(resourcesDir);
+    for (const replaced of prebuiltResult.replaced) {
+      process.stdout.write(`  Native module: ${replaced}\n`);
+    }
+    for (const skipped of prebuiltResult.skipped) {
+      process.stdout.write(`  Native module already Linux: ${skipped}\n`);
+    }
+    for (const warning of prebuiltResult.warnings) {
+      process.stdout.write(`  Native module warning: ${warning}\n`);
+    }
+    warnings.push(...prebuiltResult.warnings);
+    errors.push(...prebuiltResult.errors);
+    if (!prebuiltResult.success) {
+      errors.push(
+        `Native module prebuilt installation failed; see errors above.`
+      );
+    }
+  } else {
+    // No unpacked source supplied: check whether the asar expects unpacked
+    // native modules (they would be missing at runtime).
+    const detected = detectUnpackedNativeBinaries(
+      path.dirname(options.asarPath)
+    );
+    if (detected.length > 0) {
+      warnings.push(
+        `app.asar references ${detected.length} unpacked native module(s) ` +
+          `(${detected.map((d) => d.moduleName).join(", ")}) but no ` +
+          `app.asar.unpacked source was provided.`
+      );
+    }
+  }
 
   // Verify asar hash
   const actualAsarHash = computeFileHash(destAsarPath);

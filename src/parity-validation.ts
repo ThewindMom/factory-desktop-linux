@@ -13,9 +13,10 @@ import {
   DmgValidationResult,
 } from "./dmg-validator";
 import {
+  detectDmgAppPrefix,
+  dmgContentPathFor,
   extractFromDmg,
   computeFileHash,
-  DMG_CONTENT_PATHS,
 } from "./dmg-extraction";
 import {
   readAsarPackageMetadata,
@@ -147,15 +148,16 @@ export function compareAsarParity(
   }
 
   try {
-    // Extract app.asar from both DMGs
-    const asarPath = DMG_CONTENT_PATHS.appAsar;
+    // Extract app.asar from both DMGs (per-DMG bundle-prefix layout)
+    const x64Asar = dmgContentPathFor(detectDmgAppPrefix(x64DmgPath), "appAsar");
+    const arm64Asar = dmgContentPathFor(detectDmgAppPrefix(arm64DmgPath), "appAsar");
 
-    extractFromDmg(x64DmgPath, x64ExtractDir, [asarPath]);
-    extractFromDmg(arm64DmgPath, arm64ExtractDir, [asarPath]);
+    extractFromDmg(x64DmgPath, x64ExtractDir, [x64Asar]);
+    extractFromDmg(arm64DmgPath, arm64ExtractDir, [arm64Asar]);
 
     // Compute hashes
-    const x64AsarFile = path.join(x64ExtractDir, asarPath);
-    const arm64AsarFile = path.join(arm64ExtractDir, asarPath);
+    const x64AsarFile = path.join(x64ExtractDir, x64Asar);
+    const arm64AsarFile = path.join(arm64ExtractDir, arm64Asar);
 
     if (!fs.existsSync(x64AsarFile)) {
       return {

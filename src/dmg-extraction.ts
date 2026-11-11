@@ -19,14 +19,87 @@ import {
   MetadataValidationResult,
 } from "./asar-metadata";
 
-/** Known paths inside a Factory Desktop DMG */
-export const DMG_CONTENT_PATHS = {
+/** Shape of the DMG content path set */
+export interface DmgContentPaths {
+  appAsar: string;
+  infoPlist: string;
+  electronIcns: string;
+  electronFrameworkPlist: string;
+  /** Optional macOS CLI shipped under Resources/bin (absent in some DMGs) */
+  droidBinary: string;
+}
+
+/** Known paths inside a Factory Desktop DMG (legacy wrapped layout) */
+export const DMG_CONTENT_PATHS: DmgContentPaths = {
   appAsar: "Factory/Factory.app/Contents/Resources/app.asar",
   infoPlist: "Factory/Factory.app/Contents/Info.plist",
   electronIcns: "Factory/Factory.app/Contents/Resources/electron.icns",
   electronFrameworkPlist:
     "Factory/Factory.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist",
-} as const;
+  droidBinary: "Factory/Factory.app/Contents/Resources/bin/droid",
+};
+
+/** Paths for the newer archive-root layout ("Factory.app" at the DMG root) */
+const ROOT_DMG_CONTENT_PATHS: DmgContentPaths = {
+  appAsar: "Factory.app/Contents/Resources/app.asar",
+  infoPlist: "Factory.app/Contents/Info.plist",
+  electronIcns: "Factory.app/Contents/Resources/electron.icns",
+  electronFrameworkPlist:
+    "Factory.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist",
+  droidBinary: "Factory.app/Contents/Resources/bin/droid",
+};
+
+/**
+ * Detect the app-bundle prefix inside a DMG's archive listing.
+ *
+ * Legacy Factory DMGs wrap the bundle in a top-level "Factory/" directory
+ * ("Factory/Factory.app/..."); newer releases place "Factory.app" at the
+ * archive root ("Factory.app/..."). Returns the prefix for path building:
+ * "Factory" for the wrapped layout, "" for the root layout, or "Factory"
+ * (the original behavior) if the listing cannot be read.
+ */
+export function detectDmgAppPrefix(dmgPath: string): "Factory" | "" {
+  try {
+    const listing = execSync(`7z l "${dmgPath}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 30000,
+    });
+    // A root-level entry line ends with whitespace + "Factory.app". In the
+    // wrapped layout every "Factory.app" occurrence is preceded by "/".
+    if (/(^|\s)Factory\.app\s*$/m.test(listing)) {
+      return "";
+    }
+    return "Factory";
+  } catch {
+    return "Factory";
+  }
+}
+
+/**
+ * Return the layout-specific path for one of the known DMG content entries.
+ * Pass the layout from detectDmgAppPrefix: "Factory" for the wrapped layout,
+ * "" for the archive-root layout.
+ */
+export function dmgContentPathFor(
+  layout: "Factory" | "",
+  kind: keyof DmgContentPaths
+): string {
+  return (layout === "" ? ROOT_DMG_CONTENT_PATHS : DMG_CONTENT_PATHS)[kind];
+}
+
+/**
+ * Resolve the DMG content paths for the given DMG's layout.
+ * See detectDmgAppPrefix for the two supported layouts.
+ */
+export function resolveDmgContentPaths(
+  dmgPath: string
+): DmgContentPaths {
+  if (detectDmgAppPrefix(dmgPath) === "") {
+    return ROOT_DMG_CONTENT_PATHS;
+  }
+  return DMG_CONTENT_PATHS;
+}
 
 /** Extraction result */
 export interface ExtractionResult {
@@ -38,6 +111,8 @@ export interface ExtractionResult {
   electronVersion?: string;
   /** Path to extracted app.asar */
   asarPath?: string;
+  /** Path to the extracted app.asar.unpacked directory, if present */
+  unpackedDir?: string;
   /** SHA-256 hash of extracted app.asar */
   asarHash?: string;
   /** ASAR package metadata */
@@ -109,11 +184,11 @@ export function extractFromDmg(
       // Required paths: app.asar and the app's own Info.plist must exist.
       // The Electron Framework Info.plist is optional — some DMGs may not
       // include it, and we can fall back to ASAR devDependencies for the
-      // Electron version. Icons and droid binary are also optional here.
-      const isAppInfoPlist =
-        dmgPath_entry === DMG_CONTENT_PATHS.infoPlist;
+      // Electron version. The app.asar.unpacked directory, icons, and the
+      // droid binary are also optional here.
+      const isAppInfoPlist = dmgPath_entry.endsWith("/Contents/Info.plist");
       if (
-        dmgPath_entry.includes("app.asar") ||
+        dmgPath_entry.endsWith("/app.asar") ||
         isAppInfoPlist
       ) {
         throw new Error(
@@ -224,18 +299,25 @@ export function extractDmgPayload(
     // Ensure output directory exists
     fs.mkdirSync(outputDir, { recursive: true });
 
+    // Resolve paths for this DMG's layout (wrapped vs archive-root bundle)
+    const contentPaths = resolveDmgContentPaths(dmgPath);
+
     // Determine which paths to extract
     const pathsToExtract: string[] = [
-      DMG_CONTENT_PATHS.appAsar,
-      DMG_CONTENT_PATHS.infoPlist,
+      contentPaths.appAsar,
+      contentPaths.infoPlist,
     ];
 
     if (options.extractIcons !== false) {
-      pathsToExtract.push(DMG_CONTENT_PATHS.electronIcns);
+      pathsToExtract.push(contentPaths.electronIcns);
     }
 
     // Also extract the Electron Framework Info.plist for Electron version fallback
-    pathsToExtract.push(DMG_CONTENT_PATHS.electronFrameworkPlist);
+    pathsToExtract.push(contentPaths.electronFrameworkPlist);
+
+    // Extract the unpacked-native-modules directory when present (optional:
+    // older DMGs may not ship one; failure is reported as a warning).
+    pathsToExtract.push(`${contentPaths.appAsar}.unpacked`);
 
     // Extract from DMG (returns failed optional paths)
     const failedPaths = extractFromDmg(dmgPath, outputDir, pathsToExtract);
@@ -260,8 +342,8 @@ export function extractDmgPayload(
     }
 
     // Locate extracted files
-    const asarPath = path.join(outputDir, DMG_CONTENT_PATHS.appAsar);
-    const infoPlistPath = path.join(outputDir, DMG_CONTENT_PATHS.infoPlist);
+    const asarPath = path.join(outputDir, contentPaths.appAsar);
+    const infoPlistPath = path.join(outputDir, contentPaths.infoPlist);
 
     // Verify app.asar was extracted
     if (!fs.existsSync(asarPath)) {
@@ -293,7 +375,7 @@ export function extractDmgPayload(
       // Also try to get Electron version from the framework plist if extracted
       const electronPlistPath = path.join(
         outputDir,
-        DMG_CONTENT_PATHS.electronFrameworkPlist
+        contentPaths.electronFrameworkPlist
       );
       if (fs.existsSync(electronPlistPath)) {
         const electronPlistContent = fs.readFileSync(
@@ -327,6 +409,9 @@ export function extractDmgPayload(
       dmgVersion: effectiveDmgVersion,
       electronVersion:
         electronVersion || asarResult.packageMetadata.electronVersion,
+      unpackedDir: fs.existsSync(`${asarPath}.unpacked`)
+        ? `${asarPath}.unpacked`
+        : undefined,
       asarPath,
       asarHash: asarResult.asarHash,
       packageMetadata: asarResult.packageMetadata,

@@ -27,7 +27,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater build-app package deb rpm appimage install run-app service-enable service-status clean clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater build-app package deb rpm appimage install run-app service-enable service-status uninstall purge clean clean-dist clean-state
 
 help:
 	@printf '\nFactory Desktop Linux Make Targets\n\n'
@@ -39,6 +39,8 @@ help:
 	@printf '  %-22s %s\n' "make appimage" "Build AppImage into dist/"
 	@printf '  %-22s %s\n' "make package" "Build native package (auto-detects format)"
 	@printf '  %-22s %s\n' "make install" "Install the latest native package"
+	@printf '  %-22s %s\n' "make uninstall" "Remove the app, keep user data (login/sessions)"
+	@printf '  %-22s %s\n' "make purge" "Remove the app AND all Factory data (fresh state)"
 	@printf '  %-22s %s\n' "make run-app" "Launch the built Electron app"
 	@printf '  %-22s %s\n' "make service-enable" "Enable factory-update-manager --user service"
 	@printf '  %-22s %s\n' "make service-status" "Show factory-update-manager service status"
@@ -105,6 +107,14 @@ package: maybe-build-updater
 	fi; \
 	echo "[make] Detected format: $$format"; \
 	$(MAKE) "$$format"
+
+uninstall:
+	@echo "[make] Removing Factory Desktop (keeping user data)"
+	./uninstall.sh
+
+purge:
+	@echo "[make] Removing Factory Desktop AND all user data (fresh install state)"
+	./uninstall.sh --purge
 
 install:
 	@echo "[make] Installing latest native package"

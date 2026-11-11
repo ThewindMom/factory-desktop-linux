@@ -7,7 +7,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h
-ExecStart=/bin/sh -lc 'd=$FACTORY_DROID_PATH; if [ -z "$d" ]; then d=$(command -v droid 2>/dev/null || true); fi; if [ -z "$d" ]; then d="$HOME/.local/bin/droid"; fi; exec "$d" daemon --remote-access --enable-child-ipc --droid-path "$d" --host 127.0.0.1 --port 37643'
+# Detect + repair a foreign-owned ~/.factory (e.g. created by a root-run
+# installer) instead of crash-looping on EACCES. Fails with the exact
+# remediation command when it cannot fix the ownership itself.
+ExecStartPre=/usr/bin/factory-repair-home --create-automations
+ExecStart=/bin/sh -lc 'd=$FACTORY_DROID_PATH; if [ -z "$d" ]; then d=$(command -v droid 2>/dev/null || true); fi; if [ -z "$d" ]; then d="$HOME/.local/bin/droid"; fi; exec "$d" daemon --remote-access --droid-path "$d" --host 127.0.0.1 --port 37643'
 Restart=always
 RestartSec=10
 

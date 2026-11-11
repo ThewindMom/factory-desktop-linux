@@ -62,18 +62,45 @@ if [ -d "$BUILDER_STAGED" ]; then
     rm -rf /opt/factory-desktop/update-builder
     cp -r "$BUILDER_STAGED" /opt/factory-desktop/update-builder
 fi
-# Create the ~/.factory/automations directory for each logged-in user.
-# The app checks for this directory on startup and logs an ENOENT warning
-# if it doesn't exist. Creating it here suppresses the warning.
-if command -v systemctl >/dev/null 2>&1; then
+
+# Ship the uninstaller at /usr/bin/factory-uninstall (staged in the app dir).
+UNINSTALL_STAGED="$APP_DIR/.factory-linux/updater/factory-uninstall.sh"
+if [ -f "$UNINSTALL_STAGED" ]; then
+    install -m755 "$UNINSTALL_STAGED" /usr/bin/factory-uninstall
+fi
+# Ship the home-ownership repair helper (also the daemon unit's ExecStartPre).
+REPAIR_STAGED="$APP_DIR/.factory-linux/updater/factory-repair-home.sh"
+if [ -f "$REPAIR_STAGED" ]; then
+    install -m755 "$REPAIR_STAGED" /usr/bin/factory-repair-home
+fi
+# Create/repair ~/.factory for each logged-in user via the helper (which is
+# also the daemon unit's ExecStartPre). The helper creates each level
+# explicitly and chowns BOTH to the owning user — a bare `mkdir -p
+# ~/.factory/automations` would silently create ~/.factory as root, which
+# kills the daemon on sign-in (EACCES on auth.v2.write.*.pending).
+if [ -x /usr/bin/factory-repair-home ]; then
     for user_dir in /run/user/*/; do
         [ -d "$user_dir" ] || continue
         uid=$(basename "$user_dir")
         home_dir=$(getent passwd "$uid" | cut -d: -f6)
         [ -n "$home_dir" ] && [ -d "$home_dir" ] || continue
-        mkdir -p "$home_dir/.factory/automations" 2>/dev/null || true
-        chown "$uid" "$home_dir/.factory/automations" 2>/dev/null || true
+        /usr/bin/factory-repair-home --create-automations "$uid" "$home_dir" >/dev/null 2>&1 || true
     done
+else
+    # Fallback when the helper is missing (keeps partial installs working).
+    if command -v getent >/dev/null 2>&1; then
+        for user_dir in /run/user/*/; do
+            [ -d "$user_dir" ] || continue
+            uid=$(basename "$user_dir")
+            home_dir=$(getent passwd "$uid" | cut -d: -f6)
+            [ -n "$home_dir" ] && [ -d "$home_dir" ] || continue
+            if [ -d "$home_dir/.factory" ] && [ "$(stat -c %u "$home_dir/.factory" 2>/dev/null)" != "$uid" ]; then
+                chown -R "$uid" "$home_dir/.factory" 2>/dev/null || true
+            fi
+            mkdir -p "$home_dir/.factory" "$home_dir/.factory/automations" 2>/dev/null || true
+            chown "$uid" "$home_dir/.factory" "$home_dir/.factory/automations" 2>/dev/null || true
+        done
+    fi
 fi
 
 # Refresh icon cache so GNOME/taskbar picks up the installed hicolor icons.

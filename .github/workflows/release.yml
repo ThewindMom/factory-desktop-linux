@@ -15,10 +15,11 @@ on:
       - 'tsconfig.json'
       - '.github/workflows/release.yml'
   schedule:
-    # Run daily at 08:00 UTC
+    # Daily at 08:00 UTC: check Factory's latest-version endpoint and
+    # auto-build any new upstream release (free on a public repo).
     - cron: '0 8 * * *'
   workflow_dispatch:
-    # Manual trigger for testing
+    # Manual trigger: Actions tab or `gh workflow run release.yml --ref master`
 
 permissions:
   contents: write
@@ -50,20 +51,16 @@ jobs:
           echo "Upstream latest version: $LATEST"
           echo "latest_version=$LATEST" >> $GITHUB_OUTPUT
 
-          # Check if we already have a release for this version
-          if gh release view "v$LATEST" --repo ${{ github.repository }} >/dev/null 2>&1; then
-            echo "Release v$LATEST already exists. Skipping build."
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          else
-            echo "New version $LATEST detected. Will build."
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          fi
+          # Always build: every run produces a fresh .deb (and AppImage).
+          # When the release already exists, the release step replaces its
+          # assets with --clobber instead of skipping the build.
+          echo "Building Linux packages for $LATEST."
+          echo "should_build=true" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-release:
     needs: check-and-release
-    if: github.event_name != 'schedule' || needs.check-and-release.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -108,7 +105,7 @@ jobs:
 
       - name: Build Linux app and package
         run: |
-          node dist/cli.js build-all --factory-version "${{ needs.check-and-release.outputs.version }}" --targets deb,rpm,appimage
+          node dist/cli.js build-all --factory-version "${{ needs.check-and-release.outputs.version }}" --targets deb,appimage
 
       - name: Verify .deb was produced
         run: |
@@ -121,17 +118,6 @@ jobs:
           echo "Produced: $DEB"
           dpkg-deb --info "$DEB" | grep -E 'Package|Version|Architecture'
 
-      - name: Verify .rpm was produced
-        run: |
-          RPM=$(ls -1t dist/*.rpm 2>/dev/null | head -1)
-          if [ -z "$RPM" ]; then
-            echo "No .rpm found in dist/" >&2
-            exit 1
-          fi
-          echo "RPM_PATH=$RPM" >> $GITHUB_ENV
-          echo "Produced: $RPM"
-          rpm -qpi "$RPM" 2>/dev/null | grep -E 'Name|Version|Architecture' || true
-
       - name: Verify .AppImage was produced
         run: |
           APPIMAGE=$(ls -1t dist/*.AppImage 2>/dev/null | head -1)
@@ -142,6 +128,13 @@ jobs:
           echo "APPIMAGE_PATH=$APPIMAGE" >> $GITHUB_ENV
           echo "Produced: $APPIMAGE"
           ls -lh "$APPIMAGE"
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd "$(dirname "$DEB_PATH")"
+          sha256sum "$(basename "$DEB_PATH")" "$(basename "$APPIMAGE_PATH")" > checksums.txt
+          cat checksums.txt
+          echo "CHECKSUMS_PATH=$(pwd)/checksums.txt" >> $GITHUB_ENV
 
       - name: Extract version from .deb
         run: |
@@ -180,6 +173,10 @@ jobs:
           - systemd --user service unit
           - polkit policy
 
+          **Compatibility:**
+          - Verified running on **Linux Mint** (x64) — current production install as of $BUILD_DATE
+          - Debian/Ubuntu-based distros (.deb)
+
           **Install (Debian/Ubuntu):**
           \`\`\`bash
           sudo dpkg -i factory-desktop_${FACTORY_VERSION}_amd64.deb
@@ -200,13 +197,13 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists — updating asset, notes, and tag."
             gh release upload "$RELEASE_TAG" \
-              "$DEB_PATH" "$RPM_PATH" "$APPIMAGE_PATH" --clobber
+              "$DEB_PATH" "$APPIMAGE_PATH" "$CHECKSUMS_PATH" --clobber
             gh release edit "$RELEASE_TAG" --notes "$RELEASE_NOTES"
           else
             gh release create "$RELEASE_TAG" \
               --title "Factory Desktop $FACTORY_VERSION (Linux)" \
               --notes "$RELEASE_NOTES" \
-              "$DEB_PATH" "$RPM_PATH" "$APPIMAGE_PATH"
+              "$DEB_PATH" "$APPIMAGE_PATH" "$CHECKSUMS_PATH"
           fi
 
           # Move the tag to the current commit via the GitHub API so
@@ -222,20 +219,54 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Mirror release to artifacts repo
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          PRIVATE_REPO: seelvupledevelop/factory-desktop-linux-artifacts
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "MIRROR_TOKEN secret not set — skipping private mirror."
+            exit 0
+          fi
+          export GH_TOKEN="$MIRROR_TOKEN"
+          VERSION="${FACTORY_VERSION:?FACTORY_VERSION missing}"
+          TAG="v$VERSION"
+          cp "$CHECKSUMS_PATH" "checksums-$VERSION.txt"
+          NOTES="Mirrored automatically from the public CI build of factory-desktop-linux.
+
+          **Install (Debian/Ubuntu/Mint):**
+          \`\`\`bash
+          sudo apt install ./factory-desktop_${VERSION}_amd64.deb
+          \`\`\`
+
+          **AppImage:**
+          \`\`\`bash
+          chmod +x Factory-${VERSION}.AppImage && ./Factory-${VERSION}.AppImage
+          \`\`\`"
+          if gh release view "$TAG" --repo "$PRIVATE_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$PRIVATE_REPO" --clobber \
+              "$DEB_PATH" "$APPIMAGE_PATH" "checksums-$VERSION.txt"
+          else
+            gh release create "$TAG" --repo "$PRIVATE_REPO" \
+              --title "Factory Desktop $VERSION (Linux) — deb + AppImage" \
+              --notes "$NOTES" --latest \
+              "$DEB_PATH" "$APPIMAGE_PATH" "checksums-$VERSION.txt"
+          fi
+
+      - name: Upload checksums as artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: factory-desktop-${{ env.FACTORY_VERSION }}-checksums
+          path: dist/checksums.txt
+          if-no-files-found: warn
+
       - name: Upload .deb as artifact
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: factory-desktop-${{ env.FACTORY_VERSION }}-deb
           path: dist/*.deb
-          if-no-files-found: warn
-
-      - name: Upload .rpm as artifact
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: factory-desktop-${{ env.FACTORY_VERSION }}-rpm
-          path: dist/*.rpm
           if-no-files-found: warn
 
       - name: Upload .AppImage as artifact

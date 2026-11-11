@@ -979,4 +979,77 @@ describe("packaging", () => {
       );
     });
   });
+
+  // ─── Home-repair helper (factory-repair-home) ────────────────────
+  // Guards against the root-owned ~/.factory failure mode: a root-run
+  // installer creates ~/.factory, the daemon then dies on sign-in with
+  // EACCES on mkdir auth.v2.write.<hash>.pending. The helper is installed
+  // by postinst and wired as the daemon unit's ExecStartPre.
+  describe("home-repair helper", () => {
+    const repairScript = path.join("packaging", "linux", "factory-repair-home.sh");
+
+    const runRepair = (args: string[], env: Record<string, string> = {}): string => {
+      return execSync(`sh "${repairScript}" ${args.join(" ")}`, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "inherit"],
+        env: { ...process.env, ...env },
+      });
+    };
+
+    test("script exists, is executable, and has no fpm macro triggers", () => {
+      expect(fs.existsSync(repairScript)).toBe(true);
+      const stat = fs.statSync(repairScript);
+      expect(stat.mode & 0o111).not.toBe(0);
+      const content = fs.readFileSync(repairScript, "utf8");
+      const macroRegex = /\$\{([a-zA-Z]+)\}/g;
+      expect(content.match(macroRegex)).toEqual(null);
+    });
+
+    test("creates ~/.factory with automations and passes the write probe (non-root)", () => {
+      const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "factory-repair-"));
+      try {
+        runRepair(["--create-automations"], { HOME: fakeHome });
+        const factoryDir = path.join(fakeHome, ".factory");
+        expect(fs.existsSync(path.join(factoryDir, "automations"))).toBe(true);
+        // Running again against an existing, user-owned dir must succeed —
+        // this is the probe path the daemon unit takes on every start.
+        expect(() => runRepair([], { HOME: fakeHome })).not.toThrow();
+      } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      }
+    });
+
+    test("fails with the remediation hint when ~/.factory is not writable", () => {
+      const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "factory-repair-"));
+      const factoryDir = path.join(fakeHome, ".factory");
+      fs.mkdirSync(factoryDir, { recursive: true });
+      fs.chmodSync(factoryDir, 0o555); // read+execute only: mkdir probe fails
+      try {
+        let stderr = "";
+        try {
+          execSync(`sh "${repairScript}"`, {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env, HOME: fakeHome },
+          });
+        } catch (err) {
+          stderr = (err as { stderr?: string }).stderr ?? "";
+        }
+        expect(stderr).toContain("not writable by user");
+        expect(stderr).toContain("chown -R");
+        expect(stderr).toContain("auth.v2.write");
+      } finally {
+        fs.chmodSync(factoryDir, 0o755);
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      }
+    });
+
+    test("postinst installs the helper and the daemon unit wires it as ExecStartPre", () => {
+      const postinst = fs.readFileSync("packaging/linux/factory-desktop.postinst", "utf8");
+      const unit = fs.readFileSync("packaging/linux/factory-droid-daemon.service", "utf8");
+      expect(postinst).toContain("factory-repair-home");
+      expect(postinst).toContain('install -m755 "$REPAIR_STAGED" /usr/bin/factory-repair-home');
+      expect(unit).toContain("ExecStartPre=/usr/bin/factory-repair-home --create-automations");
+    });
+  });
 });

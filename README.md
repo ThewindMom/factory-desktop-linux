@@ -1,5 +1,15 @@
 # Factory Desktop for Linux
 
+> **⚠️ Not an official source.** This repository is a community fork that
+> repackages Factory Desktop for Linux. It is **not** the official source of
+> Factory Desktop or Droid. The **only official source** is Factory itself —
+> download official releases and accounts only from
+> [factory.ai](https://factory.ai) and the channels Factory operates. Use this
+> port at your own risk.
+
+> **✅ Latest package: [`v1.8.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.8.0)**
+> (`factory-desktop_1.8.0_amd64.deb` + `Factory-1.8.0.AppImage`), built from the official **Factory Desktop 1.8.0** macOS DMG fetched from Factory's desktop endpoint. The published assets were verified: `sha256sum -c checksums.txt` passes, `dpkg-deb -f` reports `Version: 1.8.0` / `amd64`, the daemon-transport asar markers are present, no droid binary is bundled in `resources/`, and the `factory-desktop://` scheme handler is registered. Installed over 1.4.1, the app registers as `version: 1.8.0` and its daemon answers `factory-daemon ok` on `127.0.0.1:37643` with the matching `droid` CLI 1.8.0 and `droid doctor` passing. Runs on Linux Mint (x64). Earlier releases (≤ v0.185.0) shipped without the URL-scheme handler and could not complete browser sign-in. Checksums ship with the release.
+
 Factory Desktop running natively on Linux, with `.deb`, `.rpm`, and AppImage
 packages built from Factory's official Desktop release.
 
@@ -7,9 +17,64 @@ This community port keeps the familiar Factory interface and adds Linux-native
 window controls, updates, and daemon integration. It is unofficial and is not
 affiliated with or supported by Factory.
 
+## Download
+
+Current release: [`v1.8.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.8.0)
+
+| Package | Download |
+|---|---|
+| Debian / Ubuntu / Mint (amd64) | [`factory-desktop_1.8.0_amd64.deb`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.8.0/factory-desktop_1.8.0_amd64.deb) |
+| Portable AppImage (x86_64) | [`Factory-1.8.0.AppImage`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.8.0/Factory-1.8.0.AppImage) |
+| SHA-256 checksums | [`checksums.txt`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.8.0/checksums.txt) |
+
+## What changed in 1.8.0
+
+- **Rebuilt from the official 1.8.0 DMG**
+  (`Factory-1.8.0-x64.dmg`), with the Linux packaging patches re-applied to the
+  1.8.0 app bundle.
+- **Keep the CLI on the same version.** The daemon runs the system `droid` CLI,
+  so update it with the desktop:
+
+  ```bash
+  droid update --version 1.8.0
+  ```
+
+  A desktop that is newer than the CLI is what produced the old
+  `400 status code (no body)` / `Unknown model` failures.
+- **Daemon port 37643 works.** The package keeps the forced WebSocket transport,
+  so `curl -s 127.0.0.1:37643/health` returns `factory-daemon ok` a few seconds
+  after launch; earlier builds (0.208.0 and before) could leave that port
+  without a live daemon.
+- **Verified end to end:** installed over 1.4.1, registered as `version: 1.8.0`,
+  `droid doctor` passed every enabled check, `factory-desktop://` handler
+  registered, no droid binary bundled.
+- **Factory icon in the panel and tray.** `BrowserWindow` now receives an
+  explicit `icon`, so the taskbar/window button shows Factory's logo instead of
+  the generic window glyph, and the tray returns the packaged icon on Linux
+  instead of the generated monochrome menu-bar glyph.
+
+## Automatic builds
+
+This fork checks Factory's upstream version **daily at 08:00 UTC** and
+builds a fresh `.deb` (plus `.AppImage` and SHA-256 checksums) on **every**
+run — no manual step needed. When a release for that version already exists,
+the new assets replace the old ones in place, so the download is always a
+current build.
+
+Automatic update notifications are **off by default**: updates are applied
+manually from this repository or from GitHub, so the app no longer raises
+"update available" toasts (set `FACTORY_UPDATE_NOTIFICATIONS=1` in the
+desktop's environment to turn them back on). Builds are free GitHub Actions runs on this public
+repository. You can also trigger a build manually from the **Actions** tab
+(*Release → Run workflow*) or with:
+
+```bash
+gh workflow run release.yml --ref master
+```
+
 ## Install
 
-Open the [latest release](https://github.com/ThewindMom/factory-desktop-linux/releases/latest)
+Open the [latest release](https://github.com/seelvupledevelop/factory-desktop-linux/releases/latest)
 and download the package for your distribution.
 
 ### Ubuntu, Debian, Mint, Pop!_OS, Elementary, Zorin
@@ -112,6 +177,67 @@ Factory first adopts an already healthy global daemon. If Droid was missing,
 Desktop installs it globally, restarts the service, and waits for it to become
 healthy before considering a direct fallback.
 
+## Reaching Factory from the web app
+
+The web app at [app.factory.ai](https://app.factory.ai) runs no agent locally —
+it talks to the Droid daemon on this computer. For the web app to reach this
+machine, the daemon must be running and the computer must be registered for
+Remote Control. Closing Factory Desktop stops the daemon it started, so for
+web-only use start the daemon yourself.
+
+### 1. Register this computer (once)
+
+```bash
+droid computer register -y
+droid computer list
+```
+
+`droid computer list` should show an `active` row ending in `(this machine)`.
+Registration survives reboots. Re-run `register -y` after a purge/reinstall, or
+when the daemon logs `Remote access requires a registered computer`.
+
+### 2. Start the daemon
+
+Native packages install `factory-droid-daemon.service` as a systemd **user**
+service:
+
+```bash
+systemctl --user enable --now factory-droid-daemon.service
+systemctl --user status factory-droid-daemon.service
+```
+
+Or run it in the foreground from a terminal (keep the terminal open):
+
+```bash
+droid daemon --host 127.0.0.1 --port 37643 --remote-access
+```
+
+`--remote-access` enables Remote Control for the daemon, and the packaged systemd
+service passes it. Include it whenever you start the daemon yourself and want
+the web app to drive this machine.
+
+Factory Desktop starts or adopts the same daemon on port `37643` when it opens,
+so you do not need both. Stop the service before launching a foreground daemon
+on that port, and vice versa.
+
+### 3. Verify
+
+```bash
+curl -s 127.0.0.1:37643/health   # -> factory-daemon ok
+droid doctor
+```
+
+Then open <https://app.factory.ai>, select this computer, and start a session.
+
+Notes:
+
+- Keep the daemon running while you use the web app. Without it the computer
+  shows as offline and sessions cannot start or resume.
+- The daemon binds `127.0.0.1` by default. Do not change `--host` to `0.0.0.0`;
+  remote access goes through Factory's relay, not an open local port.
+- The desktop app and the web app share the same daemon, so sessions started in
+  one appear in the other.
+
 ## Troubleshooting
 
 ### Factory Desktop does not open
@@ -154,7 +280,7 @@ factory-update-manager rollback
 ## Build from Source
 
 Most users should install a package from
-[Releases](https://github.com/ThewindMom/factory-desktop-linux/releases/latest).
+[Releases](https://github.com/seelvupledevelop/factory-desktop-linux/releases/latest).
 Building locally is intended for contributors and unsupported distributions.
 
 ### Prerequisites
@@ -169,7 +295,7 @@ Building locally is intended for contributors and unsupported distributions.
 Clone and prepare the project:
 
 ```bash
-git clone https://github.com/ThewindMom/factory-desktop-linux.git
+git clone https://github.com/seelvupledevelop/factory-desktop-linux.git
 cd factory-desktop-linux
 npm ci
 npm run build
@@ -232,11 +358,14 @@ Linux compatibility changes are applied through the patch registry in
 ## Release Automation
 
 Every push to `master` that changes the application, packaging, updater, or
-release workflow triggers a GitHub Actions build. The workflow publishes `.deb`,
-`.rpm`, and AppImage assets to the current Factory Desktop release.
+release workflow triggers a GitHub Actions build. The daily 08:00 UTC schedule
+check also creates a new Linux release automatically whenever Factory Desktop
+changes upstream (see [Automatic builds](#automatic-builds)).
 
-It also checks Factory's upstream version daily and creates a new Linux release
-when Factory Desktop changes.
+Newer automated builds appear in
+[Releases](https://github.com/seelvupledevelop/factory-desktop-linux/releases)
+as they are produced; they are not hand-verified. The newest
+**hand-verified** build is called out at the top of this README.
 
 ## Disclaimer
 

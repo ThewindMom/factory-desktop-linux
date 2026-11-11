@@ -28,4 +28,10 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
+# Remove helper binaries installed by postinst (the package itself does not
+# own them, so dpkg will not clean them up).
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    rm -f /usr/bin/factory-uninstall /usr/bin/factory-repair-home
+fi
+
 exit 0

@@ -184,7 +184,7 @@ function buildTransportResolverReplacement(
  * `process.platform!=="linux"&&` before the push.
  */
 const LISTEN_IPC_PUSH_REGEX =
-  /([\w$]+\.Ipc)&&([\w$]+\.push\("--listen","ipc"\))/;
+  /((?:[\w$]+\.)*[\w$]+\.Ipc)&&([\w$]+\.push\("--listen","ipc"\))/;
 
 /**
  * Build the replacement for the --listen ipc push.
@@ -199,9 +199,29 @@ function buildListenIpcReplacement(
 const PACKAGED_DROID_PATH_REGEX =
   /(\w+)\.app\.isPackaged\)r=(\w+)\.join\(process\.resourcesPath,"bin",process\.platform==="win32"\?"droid\.exe":"droid"\)/;
 
-function buildSystemDroidPathReplacement(appAlias: string, pathAlias: string): string {
+/**
+ * Factory Desktop 0.185.0 replaced the `if(<app>.app.isPackaged)r=<path>`
+ * statement with a destructuring ternary:
+ *
+ * ```js
+ * const{command:r,prefixArgs:o,droidPathForSessions:s,extraEnv:i}=
+ *   n?{command:n,prefixArgs:[],droidPathForSessions:n}:Qct(Jct()),c=[...];
+ * ```
+ *
+ * where `n` is the packaged resources/bin/droid path (undefined in dev).
+ * We override the packaged arm with the system droid resolver on Linux.
+ */
+const PACKAGED_DROID_TERNARY_REGEX =
+  /=([\w$]+)\?\{command:\1,prefixArgs:\[\],droidPathForSessions:\1\}:([\w$]+)\(([\w$]+)\(\)\),/;
+
+/**
+ * Shared system-droid resolver statements. Returns a string that resolves
+ * the user's droid CLI (env override -> PATH -> well-known paths -> official
+ * installer) and returns its path, or throws. Both patch shapes embed this
+ * inside an IIFE, so plain `return` statements are valid here.
+ */
+function systemDroidResolverBody(): string {
   return (
-    `${appAlias}.app.isPackaged)r=process.platform==="linux"?(()=>{${SYSTEM_DROID_MARKER}` +
     `try{const f=require("fs"),p=require("path"),cp=require("child_process"),os=require("os");` +
     `const usable=x=>{try{return f.statSync(x).isFile()&&(f.accessSync(x,f.constants.X_OK),true)}catch(e){return false}};` +
     `if(process.env.FACTORY_DROID_PATH&&usable(process.env.FACTORY_DROID_PATH))return process.env.FACTORY_DROID_PATH;` +
@@ -209,12 +229,68 @@ function buildSystemDroidPathReplacement(appAlias: string, pathAlias: string): s
     `const c=[p.join(os.homedir(),".local","bin","droid"),"/usr/local/bin/droid","/usr/bin/droid"];for(const x of c)if(usable(x))return x;` +
     `const dir=f.mkdtempSync(p.join(os.tmpdir(),"factory-droid-installer-")),tmp=p.join(dir,"install.sh");try{cp.execFileSync("curl",["--fail","--silent","--show-error","--location","--proto","=https","--tlsv1.2","--output",tmp,"https://app.factory.ai/cli"],{encoding:"utf-8",timeout:120000});f.chmodSync(tmp,384);cp.execFileSync("sh",[tmp],{encoding:"utf-8",timeout:120000,env:process.env})}finally{f.rmSync(dir,{recursive:true,force:true})}` +
     `for(const x of c)if(usable(x))return x;throw new Error("Factory installed droid, but it was not found in a global CLI location")` +
-    `}catch(e){throw e}})():${pathAlias}.join(process.resourcesPath,"bin",process.platform==="win32"?"droid.exe":"droid")`
+    `}catch(e){throw e}`
+  );
+}
+
+function buildSystemDroidPathReplacement(appAlias: string, pathAlias: string): string {
+  return (
+    `${appAlias}.app.isPackaged)r=process.platform==="linux"?(()=>{${SYSTEM_DROID_MARKER}` +
+    systemDroidResolverBody() +
+    `})():${pathAlias}.join(process.resourcesPath,"bin",process.platform==="win32"?"droid.exe":"droid")`
+  );
+}
+
+function buildSystemDroidTernaryReplacement(
+  appAlias: string,
+  fallbackFn: string,
+  fallbackArgFn: string,
+): string {
+  // The original packaged arm yields {command,prefixArgs:[],droidPathForSessions}
+  // (the app destructures it and spreads prefixArgs), so the Linux resolver
+  // must return the same object shape — returning a bare string produced
+  // "o is not iterable" when the app spawned a daemon itself.
+  return (
+    `=${appAlias}?(()=>{${SYSTEM_DROID_MARKER}if(process.platform!=="linux")return ${appAlias};` +
+    `try{const d=(()=>{` +
+    systemDroidResolverBody() +
+    `})();return{command:d,prefixArgs:[],droidPathForSessions:d}}catch(e){throw e}` +
+    `})():${fallbackFn}(${fallbackArgFn}()),`
+  );
+}
+
+/**
+ * Factory Desktop 0.185.0 removed the DesktopDaemonIpc Statsig flag: the
+ * transport resolver is now a hard-coded `function <name>(){return <E>.Ipc}`.
+ * From 0.208.0 the enum lives behind a module-alias chain
+ * (`s.DesktopDaemonTransportMode.Ipc`), so the alias group must tolerate a
+ * dotted chain. On Linux we return the WebSocket variant so the app launches
+ * the daemon with --host/--port and talks WebSocket (the transport that
+ * works on Linux).
+ */
+const TRANSPORT_RESOLVER_0185_REGEX =
+  /(function ([\w$]+)\(\)\{)(return )((?:[\w$]+\.)*[\w$]+)\.Ipc\}/;
+
+/** The 0.185.0 resolver after patching (marker sits between `{` and `return`). */
+const PATCHED_TRANSPORT_0185_REGEX = new RegExp(
+  "function [\\w$]+\\(\\)\\{" +
+    PATCH_MARKER.replace(/\*/g, "\\*") +
+    'return process\\.platform==="linux"\\?[\\w$.]+\\.WebSocket:[\\w$.]+\\.Ipc\\}',
+);
+
+function buildTransportResolver0185Replacement(
+  fnHeader: string,
+  returnKeyword: string,
+  enumAlias: string,
+): string {
+  return (
+    `${fnHeader}${PATCH_MARKER}${returnKeyword}` +
+    `process.platform==="linux"?${enumAlias}.WebSocket:${enumAlias}.Ipc}`
   );
 }
 
 const DAEMON_START_ADOPTION_REGEX =
-  /this\.currentPort=([\w$]+);const\{command:([\w$]+),args:([\w$]+),cwd:([\w$]+),env:([\w$]+)\}=([\w$]+)\(\{port:\1,transportMode:([\w$]+)\}\);([\w$]+)\("\[daemon\] Starting daemon"/;
+  /this\.currentPort=([\w$]+);const\{command:([\w$]+),args:([\w$]+),cwd:([\w$]+),env:([\w$]+)\}=([\w$]+)\(\{port:\1,transportMode:([\w$]+)\}\);((?:[\w$]+\.)*[\w$]+)\("\[daemon\] Starting daemon"/;
 
 function findStartupTrackerAlias(content: string): string | null {
   const match = content.match(/this\.processGeneration\+\+,([\w$]+)\.endPhase\(\),/);
@@ -241,7 +317,7 @@ function buildSystemDaemonAdoptionReplacement(
     `const servicePort=37643;this.currentPort=servicePort;` +
     `let ok=false;try{const fs=require("fs");for(const pid of fs.readdirSync("/proc")){if(!/^\\d+$/.test(pid))continue;let cmd="";try{cmd=fs.readFileSync("/proc/"+pid+"/cmdline","utf-8").replace(/\\0/g," ")}catch(e){}if(cmd.includes("droid")&&cmd.includes("daemon")&&cmd.includes("--remote-access")&&cmd.includes("--enable-child-ipc")&&(cmd.includes("--port "+servicePort)||cmd.includes("--port="+servicePort))){ok=true;break}}}catch(e){}` +
     `if(!ok){try{${commandBuilder}({port:servicePort,transportMode:${transportVar}});require("child_process").execFileSync("systemctl",["--user","restart","factory-droid-daemon.service"],{timeout:10000,stdio:"ignore"});ok=true}catch(e){}}` +
-    `if(ok){for(let attempt=0;attempt<20;attempt++){try{const res=await fetch("http://127.0.0.1:"+servicePort+"/health",{signal:AbortSignal.timeout(2000)});const body=(await res.text()).trim();if(res.ok&&(body==="factory-daemon ok"||body.startsWith("factory-daemon ok ")||body==="ok")){this.lastStaleCheckOutcome="adopted_system_daemon";this.process=null;this.state="running";this.processGeneration++;const z=${trackerRef};if(z&&z.endPhase)z.endPhase();${loggerVar}("[daemon] Adopted system Droid daemon",{port:servicePort});this.startHealthPoll();return}}catch(e){}await new Promise(resolve=>setTimeout(resolve,250))}}` +
+    `if(ok){for(let attempt=0;attempt<20;attempt++){try{const res=await fetch("http://127.0.0.1:"+servicePort+"/health",{signal:AbortSignal.timeout(2000)});const body=(await res.text()).trim();if(res.ok&&(body==="factory-daemon ok"||body.startsWith("factory-daemon ok ")||body==="ok"||body.includes("ok"))){this.lastStaleCheckOutcome="adopted_system_daemon";this.process=null;this.state="running";this.processGeneration++;const z=${trackerRef};if(z&&z.endPhase)z.endPhase();${loggerVar}("[daemon] Adopted system Droid daemon",{port:servicePort});this.startHealthPoll();return}}catch(e){}await new Promise(resolve=>setTimeout(resolve,250))}}` +
     `this.lastStaleCheckOutcome="system_daemon_missing";this.currentPort=${portVar}}` +
     `const{command:${commandVar},args:${argsVar},cwd:${cwdVar},env:${envVar}}=${commandBuilder}({port:${portVar},transportMode:${transportVar}});${loggerVar}("[daemon] Starting daemon"`
   );
@@ -262,6 +338,20 @@ function buildSystemDaemonAdoptionReplacement(
  * VAL-DAEMON-001: The app must not emit `--listen ipc` for Linux droid.
  * VAL-DAEMON-002: The daemon must reach healthy runtime state.
  */
+/**
+ * Cheap marker probe over the raw asar bytes (the archive concatenates
+ * file payloads, so a plain substring search is reliable for our patch
+ * markers). Used by the hard-failure gate when no regex matches.
+ */
+function asarRawContains(asarPath: string, needle: string): boolean {
+  try {
+    const buf = fs.readFileSync(asarPath);
+    return buf.indexOf(Buffer.from(needle, "utf-8")) !== -1;
+  } catch {
+    return false;
+  }
+}
+
 export async function patchDaemonTransport(
   options: DaemonTransportPatchOptions,
 ): Promise<DaemonTransportPatchResult> {
@@ -291,8 +381,12 @@ export async function patchDaemonTransport(
       "Could not find the main Vite bundle file (.vite/build/index-*.js) in the asar. " +
       "The asar structure may have changed in a newer Factory Desktop version.";
 
-    if (options.tolerateMissingTarget) {
-      warnings.push(message + " Skipping patch (tolerateMissingTarget=true).");
+    // Even with tolerateMissingTarget: if the patch markers are nowhere in
+    // the asar, nothing was ever patched — shipping this deb would repeat
+    // the 0.208.0 regression (app spawning a nonexistent
+    // resources/bin/droid). Hard-fail instead of silently succeeding.
+    if (options.tolerateMissingTarget && asarRawContains(options.asarPath, SYSTEM_DROID_MARKER)) {
+      warnings.push(message + " Markers present — already patched. Skipping (tolerateMissingTarget=true).");
       return {
         success: true,
         patched: false,
@@ -305,6 +399,15 @@ export async function patchDaemonTransport(
       };
     }
 
+    if (options.tolerateMissingTarget) {
+      errors.push(
+        message +          "Daemon-transport patch matched nothing and no patch markers are " +
+          "present anywhere in the asar. Refusing to ship an unpatched deb."
+      );
+    } else {
+      errors.push(message);
+    }
+
     return {
       success: false,
       patched: false,
@@ -312,7 +415,7 @@ export async function patchDaemonTransport(
       patchedHash: originalHash,
       patchCount: 0,
       patches: [],
-      errors: [message],
+      errors,
       warnings,
     };
   }
@@ -368,8 +471,27 @@ export async function patchDaemonTransport(
         replacementSnippet: "...force WebSocket on Linux...",
       });
     } else {
-      // Check if the function exists at all
-      if (content.includes("DesktopDaemonIpc")) {
+      // 0.185.0+ fallback: hard-coded transport resolver
+      const resolver0185Result: RegexPatchResult = applyRegexPatch(
+        patchedContent,
+        TRANSPORT_RESOLVER_0185_REGEX,
+        (_match, fnHeader, _fnName, returnKeyword, enumAlias) =>
+          buildTransportResolver0185Replacement(fnHeader, returnKeyword, enumAlias),
+      );
+      if (resolver0185Result.matched) {
+        patchedContent = resolver0185Result.content;
+        filePatchCount++;
+        patches.push({
+          id: "force-websocket-on-linux-0185",
+          description:
+            "Inject process.platform===\"linux\" guard into hard-coded " +
+            "transport resolver to force WebSocket on Linux",
+          originalSnippet: resolver0185Result.match,
+          replacementSnippet:
+            '...return process.platform==="linux"?<E>.WebSocket:<E>.Ipc...',
+        });
+      } else if (content.includes("DesktopDaemonIpc")) {
+        // Check if the function exists at all
         if (
           content.includes("process.platform") &&
           content.includes("DesktopDaemonIpc")
@@ -428,15 +550,35 @@ export async function patchDaemonTransport(
         originalSnippet: systemDroidResult.match,
         replacementSnippet: "...resolve system droid CLI...",
       });
-    } else if (
-      content.includes("process.resourcesPath") &&
-      content.includes("droid-path") &&
-      !content.includes(SYSTEM_DROID_MARKER)
-    ) {
-      errors.push(
-        `Found packaged droid path logic in ${bundleFile} but system droid ` +
-          `regex did not match. Manual inspection required.`,
+    } else {
+      // 0.185.0+ fallback: destructuring-ternary packaged-droid selection
+      const ternaryResult: RegexPatchResult = applyRegexPatch(
+        patchedContent,
+        PACKAGED_DROID_TERNARY_REGEX,
+        (_match, appAlias, fallbackFn, fallbackArgFn) =>
+          buildSystemDroidTernaryReplacement(appAlias, fallbackFn, fallbackArgFn),
       );
+      if (ternaryResult.matched) {
+        patchedContent = ternaryResult.content;
+        filePatchCount++;
+        patches.push({
+          id: "use-system-droid-cli-0185",
+          description:
+            "Resolve packaged Linux daemon binary from the system droid CLI " +
+            "instead of resources/bin/droid (ternary form)",
+          originalSnippet: ternaryResult.match,
+          replacementSnippet: "...resolve system droid CLI...",
+        });
+      } else if (
+        content.includes("process.resourcesPath") &&
+        content.includes("droid-path") &&
+        !content.includes(SYSTEM_DROID_MARKER)
+      ) {
+        errors.push(
+          `Found packaged droid path logic in ${bundleFile} but system droid ` +
+            `regex did not match. Manual inspection required.`,
+        );
+      }
     }
 
     // Patch 4: packaged Linux should adopt the systemd/user-owned droid
@@ -483,7 +625,7 @@ export async function patchDaemonTransport(
       });
     } else if (
       content.includes("startInternal()") &&
-      content.includes("--enable-child-ipc") &&
+      (content.includes("--remote-access") || content.includes("--enable-child-ipc")) &&
       !content.includes(SYSTEM_DAEMON_ADOPTION_MARKER)
     ) {
       errors.push(
@@ -527,6 +669,28 @@ export async function patchDaemonTransport(
     };
   }
 
+  if (totalPatchCount === 0) {
+    // Build gate (VAL-DAEMON-001/002): refuse to let the packaging pass
+    // silently ship an unpatched asar. If the markers exist, a previous
+    // pass already patched this asar (still fine). If not, the upstream
+    // bundle shape changed and shipping it would produce a desktop that
+    // spawns a nonexistent resources/bin/droid.
+    if (asarRawContains(options.asarPath, SYSTEM_DROID_MARKER)) {
+      warnings.push(
+        "No new patches were applied, but daemon-transport patch markers " +
+          "are present — the asar was already patched.",
+      );
+    } else {
+      errors.push(
+        "Daemon-transport patch matched nothing in the asar and no patch " +
+          "markers are present. The upstream bundle shape has changed; " +
+          "shipping this deb would make the app spawn a nonexistent " +
+          "resources/bin/droid. Add a regex for the new upstream shape in " +
+          "src/daemon-transport-patch.ts — do not disable this gate.",
+      );
+    }
+  }
+
   if (errors.length > 0) {
     return {
       success: false,
@@ -540,15 +704,9 @@ export async function patchDaemonTransport(
     };
   }
 
-  if (totalPatchCount === 0) {
-    warnings.push(
-      "No patches were applied. The asar may already be patched, or the " +
-        "target code patterns may have changed.",
-    );
-  }
-
+  // Nothing matched and no markers were present: hard-failed above.
   return {
-    success: true,
+    success: totalPatchCount > 0,
     patched: totalPatchCount > 0,
     originalHash,
     patchedHash,
@@ -638,7 +796,28 @@ export function validateDaemonTransport(
 
     // Check for the WebSocket transport guard on Linux.
     // Version-agnostic: look for process.platform==="linux" near
-    // .WebSocket in the context of DesktopDaemonIpc.
+    // .WebSocket in the context of DesktopDaemonIpc, or in the hard-coded
+    // 0.185.0+ resolver form.
+    const resolver0185Match = content.match(TRANSPORT_RESOLVER_0185_REGEX);
+    if (
+      resolver0185Match &&
+      resolver0185Match[0].includes('process.platform==="linux"') &&
+      resolver0185Match[0].includes(".WebSocket")
+    ) {
+      forcesWebSocketOnLinux = true;
+    } else if (content.match(PATCHED_TRANSPORT_0185_REGEX)) {
+      forcesWebSocketOnLinux = true;
+    } else if (
+      resolver0185Match &&
+      !resolver0185Match[0].includes("process.platform") &&
+      !content.includes("DesktopDaemonIpc")
+    ) {
+      errors.push(
+        "Transport resolver can still select IPC transport on Linux. " +
+          "The daemon may emit `--listen ipc` which is unreliable " +
+          "on Linux (IPC channel setup issues).",
+      );
+    }
     if (content.includes("DesktopDaemonIpc")) {
       // Find the transport resolver function using the same regex
       const match = content.match(TRANSPORT_RESOLVER_REGEX);
@@ -715,7 +894,7 @@ export function validateDaemonTransport(
       hasSystemDaemonAdoptionPatch = true;
     } else if (
       content.includes("startInternal()") &&
-      content.includes("--enable-child-ipc")
+      (content.includes("--remote-access") || content.includes("--enable-child-ipc"))
     ) {
       errors.push(
         "Packaged Linux desktop can still spawn a Desktop-owned droid daemon " +

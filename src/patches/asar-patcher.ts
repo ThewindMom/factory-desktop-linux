@@ -43,11 +43,15 @@ export function computeFileHash(filePath: string): string {
 /**
  * Find the main Vite bundle files inside an asar.
  *
- * Factory Desktop bundles its Electron main-process code as
- * `.vite/build/index-<hash>.js`. There may be multiple files; all are
- * returned so patches can scan each one.
+ * Factory Desktop bundles its Electron main-process code in
+ * `.vite/build/<chunk>-<hash>.js` files. The daemon spawn / transport code
+ * lived in `index-<hash>.js` up to 0.187.x but moved to an
+ * `initLifecycle-<hash>.js` chunk from 0.208.0 (possibly other named chunks in
+ * later versions), so scanning only `index-*` silently misses everything.
+ * All chunk files are returned so patches can scan each one; `main.js` (the
+ * static require entry) and `preload.js` (renderer preload) are excluded.
  *
- * @returns Array of asar-internal paths, e.g. `.vite/build/index-AbC123.js`
+ * @returns Array of asar-internal paths, e.g. `.vite/build/initLifecycle-D3kvsJfz.js`
  */
 export function findMainBundleFiles(asarPath: string): string[] {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -57,7 +61,11 @@ export function findMainBundleFiles(asarPath: string): string[] {
     .map((f) => parseIsPackEntry(f))
     .filter((f): f is string => f !== null);
   return files.filter(
-    (f) => f.startsWith(".vite/build/index-") && f.endsWith(".js"),
+    (f) =>
+      f.startsWith(".vite/build/") &&
+      f.endsWith(".js") &&
+      f !== ".vite/build/main.js" &&
+      f !== ".vite/build/preload.js",
   );
 }
 

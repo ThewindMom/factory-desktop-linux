@@ -1,0 +1,70 @@
+# Factory Desktop (unofficial Linux port) — Changelog
+# Repo: https://github.com/seelvupledevelop/factory-desktop-linux
+# Artifacts mirror: https://github.com/seelvupledevelop/factory-desktop-linux-artifacts (private)
+
+────────────────────────────────────────────────────────────────
+v0.187.0 — 2026-09-30  (upstream Factory Desktop 0.187.0)
+────────────────────────────────────────────────────────────────
+
+FIXES
+  * Browser sign-in deep links now work out of the box.
+    electron-builder silently dropped the MimeType key from the .desktop
+    entry it generates, so no app was registered for factory-desktop:// —
+    Chrome showed "No Apps available" after web sign-in and the auth code
+    never reached the app (symptoms: "could not find the app",
+    "Open xdg-open?" leading nowhere, daemon 401 loop
+    "Missing authorization token").
+    Fixed by moving the scheme to the supported `linux.mimeTypes` option
+    in src/packaging.ts; shipped .desktop now carries
+    MimeType=x-scheme-handler/factory-desktop;
+
+  * Existing installs (v0.185.0 / first v0.187.0 builds) can register the
+    handler without reinstalling:
+      xdg-mime default factory-desktop.desktop x-scheme-handler/factory-desktop
+    (system-wide installs may need the .desktop copied to
+    ~/.local/share/applications first — see README.)
+
+REBUILD
+  * Rebuilt from the official Factory-0.187.0-x64.dmg
+    (app.factory.ai/api/desktop → S3 downloads.factory.ai).
+  * Port source otherwise unchanged since v0.185.0 (version-agnostic asar
+    patches carried over: daemon WebSocket transport on 127.0.0.1:37643,
+    auto-updater guard, window controls, Linux keytar swap).
+
+VERIFICATION
+  * sha256sum -c checksums.txt passes; dpkg-deb --info correct
+    (factory-desktop 0.187.0 amd64).
+  * Daemon patch markers present in app.asar ("factory-droid-daemon",
+    port 37643); no bundled droid binary; keytar.node is Linux ELF;
+    Rust factory-update-manager staged.
+  * Live test on Linux Mint 22.3 (cold start, no prior droid login):
+    - .deb installed; user services factory-droid-daemon /
+      factory-update-manager enabled.
+    - First launch auto-installed droid CLI 0.230.0 to ~/.local/bin/droid.
+    - daemon healthy after sign-in: curl 127.0.0.1:37643/health
+      -> "factory-daemon ok".
+
+KNOWN ISSUES (environment, not packaging)
+  * If ~/.factory ends up root-owned (e.g. running the installer via
+    sudo), the daemon crashes with EACCES in SessionService. Fix:
+      sudo chown -R "$USER":"$USER" ~/.factory
+  * The systemd factory-droid-daemon.service needs signed-in credentials
+    in the global CLI store; until sign-in completes it loops with a
+    401 "Missing authorization token" — this is expected signed-out
+    behavior, not a crash.
+
+────────────────────────────────────────────────────────────────
+v0.186.0 — skipped (no port changes; upstream only)
+────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────
+v0.185.0 — 2026-09-27  (previous verified release)
+────────────────────────────────────────────────────────────────
+
+  * First hand-verified Linux Mint 22.3 build: daemon adoption over
+    WebSocket on 127.0.0.1:37643, single user-owned
+    "droid daemon --remote-access" instance, This Computer → Local green.
+  * DMG layout detection (Factory.app at archive root), Linux keytar
+    prebuilt swap, daemon-transport patch rewritten for 0.185.0 asar,
+    "o is not iterable" droid resolver fix, service unit with
+    --remote-access on port 37643.
