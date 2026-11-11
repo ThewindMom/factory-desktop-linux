@@ -7,8 +7,8 @@
 > [factory.ai](https://factory.ai) and the channels Factory operates. Use this
 > port at your own risk.
 
-> **✅ Latest package: [`v1.4.1`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.4.1)**
-> (`factory-desktop_1.4.1_amd64.deb` + `Factory-1.4.1.AppImage`), built from the official **Factory Desktop 1.4.1** macOS DMG fetched from Factory's desktop endpoint. The assembled payload was verified locally: `sha256sum -c checksums.txt` passes, `dpkg-deb --info` reports `Version: 1.4.1` / `amd64`, the daemon-transport and system-droid asar patches are present, no droid binary is bundled in `resources/`, and the `factory-desktop://` scheme handler is registered. Installed over 1.3.0, the app registers as `version: 1.4.1` and its daemon answers `factory-daemon ok` on `127.0.0.1:37643` with the matching `droid` CLI 1.4.1. Runs on Linux Mint (x64). Earlier releases (≤ v0.185.0) shipped without the URL-scheme handler and could not complete browser sign-in. Checksums ship with the release.
+> **✅ Latest package: [`v1.8.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.8.0)**
+> (`factory-desktop_1.8.0_amd64.deb` + `Factory-1.8.0.AppImage`), built from the official **Factory Desktop 1.8.0** macOS DMG fetched from Factory's desktop endpoint. The published assets were verified: `sha256sum -c checksums.txt` passes, `dpkg-deb -f` reports `Version: 1.8.0` / `amd64`, the daemon-transport asar markers are present, no droid binary is bundled in `resources/`, and the `factory-desktop://` scheme handler is registered. Installed over 1.4.1, the app registers as `version: 1.8.0` and its daemon answers `factory-daemon ok` on `127.0.0.1:37643` with the matching `droid` CLI 1.8.0 and `droid doctor` passing. Runs on Linux Mint (x64). Earlier releases (≤ v0.185.0) shipped without the URL-scheme handler and could not complete browser sign-in. Checksums ship with the release.
 
 Factory Desktop running natively on Linux, with `.deb`, `.rpm`, and AppImage
 packages built from Factory's official Desktop release.
@@ -19,24 +19,24 @@ affiliated with or supported by Factory.
 
 ## Download
 
-Current release: [`v1.4.1`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.4.1)
+Current release: [`v1.8.0`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/tag/v1.8.0)
 
 | Package | Download |
 |---|---|
-| Debian / Ubuntu / Mint (amd64) | [`factory-desktop_1.4.1_amd64.deb`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.4.1/factory-desktop_1.4.1_amd64.deb) |
-| Portable AppImage (x86_64) | [`Factory-1.4.1.AppImage`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.4.1/Factory-1.4.1.AppImage) |
-| SHA-256 checksums | [`checksums.txt`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.4.1/checksums.txt) |
+| Debian / Ubuntu / Mint (amd64) | [`factory-desktop_1.8.0_amd64.deb`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.8.0/factory-desktop_1.8.0_amd64.deb) |
+| Portable AppImage (x86_64) | [`Factory-1.8.0.AppImage`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.8.0/Factory-1.8.0.AppImage) |
+| SHA-256 checksums | [`checksums.txt`](https://github.com/seelvupledevelop/factory-desktop-linux/releases/download/v1.8.0/checksums.txt) |
 
-## What changed in 1.4.1
+## What changed in 1.8.0
 
-- **Rebuilt from the official 1.4.1 DMG**
-  (`Factory-1.4.1-x64.dmg`), with the Linux packaging patches re-applied to the
-  1.4.1 app bundle.
+- **Rebuilt from the official 1.8.0 DMG**
+  (`Factory-1.8.0-x64.dmg`), with the Linux packaging patches re-applied to the
+  1.8.0 app bundle.
 - **Keep the CLI on the same version.** The daemon runs the system `droid` CLI,
   so update it with the desktop:
 
   ```bash
-  droid update --version 1.4.1
+  droid update --version 1.8.0
   ```
 
   A desktop that is newer than the CLI is what produced the old
@@ -45,9 +45,9 @@ Current release: [`v1.4.1`](https://github.com/seelvupledevelop/factory-desktop-
   so `curl -s 127.0.0.1:37643/health` returns `factory-daemon ok` a few seconds
   after launch; earlier builds (0.208.0 and before) could leave that port
   without a live daemon.
-- **Verified end to end:** installed over 1.3.0, registered as `version: 1.4.1`,
-  `droid doctor` all checks passed, `factory-desktop://` handler registered, no
-  droid binary bundled.
+- **Verified end to end:** installed over 1.4.1, registered as `version: 1.8.0`,
+  `droid doctor` passed every enabled check, `factory-desktop://` handler
+  registered, no droid binary bundled.
 - **Factory icon in the panel and tray.** `BrowserWindow` now receives an
   explicit `icon`, so the taskbar/window button shows Factory's logo instead of
   the generic window glyph, and the tray returns the packaged icon on Linux
